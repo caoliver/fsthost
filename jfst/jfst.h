@@ -53,7 +53,7 @@ typedef enum {
 
 typedef struct {
 	int32_t		map[128];
-	bool		wait;
+	bool		wait, succeeded;
 	int8_t		cc;
 	int32_t		param;
 } MidiLearn;

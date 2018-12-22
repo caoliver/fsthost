@@ -718,6 +718,8 @@ idle_cb(GJFST *gjfst) {
 	// Changes - MIDI learn
 	if ( changes & CHANGE_MIDILE ) {
 		MidiLearn* ml = &jfst->midi_learn;
+		if (!ml->succeeded)
+		  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gjfst->midi_learn_toggle), ml->wait);
 		bool show_tooltip = false;
 		char tooltip[96 * 128];
 		tooltip[0] = '\0';
@@ -741,7 +743,10 @@ idle_cb(GJFST *gjfst) {
 
 		if (show_tooltip)
 			gtk_widget_set_tooltip_text(gjfst->midi_learn_toggle, tooltip);
-		gtk_toggle_button_set_active( GTK_TOGGLE_BUTTON( gjfst->midi_learn_toggle ), FALSE );
+		if (ml->succeeded) {
+			ml->succeeded = false;
+			gtk_toggle_button_set_active( GTK_TOGGLE_BUTTON( gjfst->midi_learn_toggle ), FALSE );
+		}
 	}
 
 	// Changes - volume

@@ -139,6 +139,7 @@ static void jfst_idle( void* data ) {
 	if ( ml->wait && ml->cc >= 0 && ml->param >= 0 ) {
 		ml->map[ml->cc] = ml->param;
 		ml->wait = false;
+		ml->succeeded = true;
 
 		char name[FST_MAX_PARAM_NAME];
 		fst_call_dispatcher ( jfst->fst, effGetParamName, ml->param, 0, name, 0 );
