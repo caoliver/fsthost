@@ -753,6 +753,7 @@ static void usage(char* appname) {
 	fprintf(stderr, format, "-n", "Disable Editor and GTK GUI");
 	fprintf(stderr, format, "-N", "Notify changes by SysEx");
 	fprintf(stderr, format, "-e", "Hide Editor");
+	fprintf(stderr, format, "-E", "Use embedded editor");
 	fprintf(stderr, format, "-s <state_file>", "Load <state_file>");
 #ifdef SOCKET_STUFF
 	fprintf(stderr, format, "-S <port>", "Start CTRL server on port <port>");
@@ -924,6 +925,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			case 'b': jvst->bypassed = TRUE; break;
 			case 'd': free(jvst->dbinfo_file); jvst->dbinfo_file = optarg; break;
 			case 'e': jvst->with_editor = WITH_EDITOR_HIDE; break;
+			case 'E': jvst->is_embedded = TRUE; break;
 			case 'g': opt_generate_dbinfo = true; break;
 			case 'L': opt_list_plugins = true; break;
 			case 'B': jvst->bbt_sync = true; break;

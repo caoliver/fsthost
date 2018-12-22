@@ -63,6 +63,7 @@ typedef struct _JackVST {
     enum WantState  want_state;
     short           want_state_cc;
     enum WithEditor with_editor;
+    bool            is_embedded;
     bool            want_resize;
     double          tempo;
     float           volume; /* where 0.0 mean silence */
