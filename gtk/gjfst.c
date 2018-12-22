@@ -427,7 +427,6 @@ save_handler (GtkToggleButton *but, gpointer ptr) {
 	if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT) {
 		char *filename;
 		char *selected;
-		char *last4;
 		const gchar *fa_name;
 
 		selected = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER(dialog));
@@ -435,22 +434,26 @@ save_handler (GtkToggleButton *but, gpointer ptr) {
 		filename = alloca (strlen (selected) + 5);
 		strcpy (filename, selected);
 
-		last4 = selected + strlen(selected) - 4;
 		fa_name = gtk_file_filter_get_name( gtk_file_chooser_get_filter(GTK_FILE_CHOOSER(dialog)) );
 
-		// F1 Filter - FPS
-		if ( strcmp(gtk_file_filter_get_name(f1), fa_name) == 0) {
-			if (strcasecmp (".fps", last4) != 0)
-				strcat (filename, ".fps");
-		// F2 filter - FXB
-		} else if ( strcmp(gtk_file_filter_get_name(f2), fa_name) == 0) {
-			if (strcasecmp (".fxb", last4) != 0)
-				strcat (filename, ".fxb");
-		// F3 Filter - FXP
-		} else if ( strcmp(gtk_file_filter_get_name(f3), fa_name) == 0) {
-			if (strcasecmp (".fxp", last4) != 0)
-				strcat (filename, ".fxp");
-		}
+		char *filter_extn;
+		if ( ! fa_name ||
+		     strcmp(gtk_file_filter_get_name(f1), fa_name) == 0)
+			filter_extn = ".fps";
+		else if ( strcmp(gtk_file_filter_get_name(f2), fa_name) == 0)
+			filter_extn = ".fxb";
+		else if ( strcmp(gtk_file_filter_get_name(f2), fa_name) == 0)
+			filter_extn = ".fxp";
+
+		char *actual_extn = strrchr(filename, '/');
+		actual_extn =
+			strchr(actual_extn ? actual_extn : filename, '.');
+		if (! actual_extn)
+			strcat(filename, filter_extn);
+		else if ( strcmp(actual_extn, ".fps") &&
+			  strcmp(actual_extn, ".fxp") &&
+			  strcmp(actual_extn, ".fxb") )
+			strcpy(actual_extn, filter_extn);
 
 		if (! jfst_save_state (jfst, filename)) {
 			GtkWidget * errdialog = gtk_message_dialog_new (GTK_WINDOW (window),
