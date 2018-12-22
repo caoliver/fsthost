@@ -177,6 +177,9 @@ static void usage(char* appname) {
 #endif
 	fprintf(stderr, fmt, "-N", "Notify changes by SysEx");
 	fprintf(stderr, fmt, "-e", "Hide Editor");
+#ifdef EMBEDDED_EDITOR
+	fprintf(stderr, fmt, "-E", "Use embedded editor");
+#endif
 	fprintf(stderr, fmt, "-S <port>", "Start CTRL server on port <port>. Use 0 for random.");
 	fprintf(stderr, fmt, "-s <state_file>", "Load <state_file>");
 	fprintf(stderr, fmt, "-c <client_name>", "Jack Client name");
@@ -240,6 +243,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 	int		ret = 1;
 	bool		opt_have_serv = false;
 	bool		show_fst_editor = true;
+	bool		use_embedded_editor = false;
 
 	JFST_DEFAULTS* def = jfst_get_defaults();
 
@@ -272,12 +276,15 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
         // Parse command line options
 	cmdline2arg(&argc, &argv, cmdline);
 	short c;
-	while ( (c = getopt (argc, argv, "Abd:egs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:vV")) != -1) {
+	while ( (c = getopt (argc, argv, "Abd:eEgs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:vV")) != -1) {
 		switch (c) {
 			case 'A': def->want_port_aliases = true; break;
 			case 'b': def->bypassed = true; break;
 			case 'd': def->dbinfo_file = optarg; break;
 			case 'e': show_fst_editor = false; break;
+#ifdef EMBEDDED_EDITOR
+			case 'E': use_embedded_editor = true; break;
+#endif
 			case 'g': mode = GEN_DB; break;
 			case 'L': mode = LIST; break;
 			case 's': plugins[sc++].state = optarg; break;
@@ -397,7 +404,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 
 		JFST_NODE* jn = jfst_node_get_first();
 		for ( ; jn; jn = jn->next )
-			gjfst_add( jn->jfst, show_fst_editor );
+		  gjfst_add( jn->jfst, show_fst_editor, use_embedded_editor );
 
 		gjfst_start();
 

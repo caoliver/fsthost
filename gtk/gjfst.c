@@ -611,6 +611,7 @@ static void
 editor_handler (GtkToggleButton *but, gpointer ptr) {
 	GJFST* gjfst = (GJFST*) ptr;
 	JFST* jfst = gjfst->jfst;
+	XClassHint *hint;
 
 	if (gtk_toggle_button_get_active (but)) {
 #ifndef EMBEDDED_EDITOR
@@ -618,7 +619,19 @@ editor_handler (GtkToggleButton *but, gpointer ptr) {
 #else
 		bool popup = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gjfst->editor_checkbox));
 		if (! fst_run_editor(jfst->fst, popup)) return;
-		if (! popup) return;
+
+		Window win = (Window)jfst->fst->xid;
+
+		if (! popup) {
+		  if ((hint = XAllocClassHint())) {
+		    hint->res_name = "fsthost32.exe";
+		    hint->res_class = "Wine:Popup";
+		    XSetClassHint(the_gtk_display, win, hint);
+		    XFree(hint);
+		  }
+		  XMapWindow(the_gtk_display, win);
+		  return;
+		}
 
 		// Create GTK Socket (Widget)
 		gtk_socket = gtk_socket_new ();
@@ -631,6 +644,7 @@ editor_handler (GtkToggleButton *but, gpointer ptr) {
 
 		gtk_widget_set_size_request(gtk_socket, jfst->fst->width, jfst->fst->height);
 		gtk_socket_add_id (GTK_SOCKET (gtk_socket), GDK_POINTER_TO_XID (jfst->fst->xid) );
+		XMapWindow(the_gtk_display, win);
 
 #ifdef MOVING_WINDOWS_WORKAROUND
 		g_signal_connect (G_OBJECT(window), "configure-event", G_CALLBACK(configure_handler), jfst);
@@ -808,7 +822,7 @@ make_img_button(const gchar *stock_id, const gchar *tooltip, bool toggle,
 	return button;
 }
 
-static GJFST* gjfst_new ( JFST* jfst ) {
+static GJFST* gjfst_new ( JFST* jfst, bool embedded ) {
 	GJFST* gjfst = malloc ( sizeof(GJFST) );
 	gjfst->jfst = jfst;
 	jfst->user_ptr = gjfst;
@@ -829,7 +843,7 @@ static GJFST* gjfst_new ( JFST* jfst ) {
 #ifdef EMBEDDED_EDITOR
 	gjfst->editor_checkbox = gtk_check_button_new();
 	gtk_widget_set_tooltip_text(gjfst->editor_checkbox, "Embedded Editor");
-	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gjfst->editor_checkbox), FALSE);
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gjfst->editor_checkbox), embedded ? TRUE : FALSE);
 	gtk_box_pack_start(GTK_BOX(hpacker), gjfst->editor_checkbox, FALSE, FALSE, 0);
 #endif
 	fst_set_window_close_callback( jfst->fst, gtk_edit_close_handler, gjfst );
@@ -919,10 +933,10 @@ static int gjfst_xerror_handler( Display *disp, XErrorEvent *ev ) {
 }
 
 /* ------------------------------- PUBLIC ---------------------------------------------- */
-void gjfst_add (JFST* jfst, bool editor) {
+void gjfst_add (JFST* jfst, bool editor, bool embedded) {
 //	g_info("GTK Thread WineID: %d | LWP: %d", GetCurrentThreadId (), (int) syscall (SYS_gettid));
 
-	GJFST* gjfst = gjfst_new ( jfst );
+	GJFST* gjfst = gjfst_new ( jfst, embedded );
 
 	gtk_box_pack_start(GTK_BOX(vpacker), gjfst->hpacker, FALSE, FALSE, 0);
 
