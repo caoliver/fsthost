@@ -244,6 +244,7 @@ static void signal_handler (int signum) {
 
 	switch(signum) {
 	case SIGINT:
+	case SIGTERM:
 		puts("Caught signal to terminate (SIGINT)");
 		g_idle_add( (GSourceFunc) jvst_quit, jvst);
 		break;
@@ -1053,12 +1054,13 @@ no_midi:
 		jvst->outs[i] = malloc(sizeof(float) * jvst->buffer_size); // float*
 	}
 
-	// Handling SIGINT for clean quit
+	// Handling SIGINT and SIGTERM for clean quit
 	struct sigaction sa;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sa.sa_handler = &signal_handler;
 	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
 
 	// Handling SIGUSR1 for save state - mostly for ladish support
 	if (sigusr1_save_state && jvst->default_state_file)
