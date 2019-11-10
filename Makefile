@@ -2,11 +2,13 @@
 SRCDIR             := .
 SUBDIRS            :=
 PLAT               := 32
-GTK                := 3
+GTK                := 2
 VUMETER            := 0
 LBITS              := $(shell getconf LONG_BIT)
-LASH_EXISTS        := $(shell if pkg-config --exists lash-1.0; then echo yes; else echo no; fi)
-#LAST_EXISTS := 'no'
+#LASH_EXISTS        := $(shell if pkg-config --exists lash-1.0; then echo yes; else echo no; fi)
+LAST_EXISTS := 'no'
+
+WINE_DIR=/usr/local/wine/32
 
 # Modules
 PKG_CONFIG_MODULES := glib-2.0
@@ -26,7 +28,8 @@ endif
 
 # Shared GCC flags
 CEXTRA             := $(shell pkg-config --cflags $(PKG_CONFIG_MODULES))
-CEXTRA             += -g -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -frounding-math -fsignaling-nans -mfpmath=sse -msse2
+CEXTRA             += -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -frounding-math -fsignaling-nans -mfpmath=sse -msse2
+ 
 
 ifeq ($(VUMETER),0)
 CEXTRA             += -DNO_VUMETER
@@ -49,7 +52,8 @@ LDFLAGS            := -mwindows
 LIBRARIES          := -lpthread -lX11 $(shell pkg-config --libs $(PKG_CONFIG_MODULES))
 
 # Shared include / install paths
-INCLUDE_PATH        = -I. -I/usr/include -I/usr/include -I/usr/include/wine -I/usr/include/wine/windows
+INCLUDE_PATH        = -I. -I/usr/include -I$(WINE_DIR)/include -I$(WINE_DIR)/include/wine -I$(WINE_DIR)/include/wine/windows
+INCLUDE_PATH	   += -I/usr/local/wine/jack/include
 DESTDIR             =
 PREFIX              = /usr
 MANDIR              = $(PREFIX)/man/man1
