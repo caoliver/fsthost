@@ -80,7 +80,7 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 
 	switch ( proto_lookup ( msg ) ) {
 	case CMD_EDITOR_OPEN:
-		fst_run_editor ( jvst->fst, false );
+		fst_run_editor ( jvst->fst );
 		break;
 	case CMD_EDITOR_CLOSE:
 		fst_call ( jvst->fst, EDITOR_CLOSE );

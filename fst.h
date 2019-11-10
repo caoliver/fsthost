@@ -102,7 +102,6 @@ typedef struct _FST {
 	int			MainThreadId;
 
 	/* GUI */
-	bool			editor_popup;
 	void*			window; /* win32 HWND */
 	void*			xid;    /* X11 XWindow */
 	int			width;
@@ -156,7 +155,7 @@ void fst_program_change (FST *fst, int32_t program);
 bool fst_get_program_name (FST *fst, short program, char* name, size_t size);
 bool fst_set_program_name (FST *fst, const char* name);
 
-bool fst_run_editor (FST*, bool popup);
+bool fst_run_editor (FST *fst);
 bool fst_show_editor (FST *fst);
 
 /* Support for FXB/FXP files (fxb.c) */

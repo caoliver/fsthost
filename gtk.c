@@ -41,7 +41,7 @@ static	GtkWidget* vpacker;
 static	GtkWidget* hpacker;
 static	GtkWidget* bypass_button;
 static	GtkWidget* editor_button;
-static	GtkWidget* editor_checkbox;
+//static	GtkWidget* editor_checkbox;
 static	GtkWidget* channel_listbox;
 static	GtkWidget* transposition_spin;
 static  GtkWidget* preset_listbox;
@@ -351,42 +351,10 @@ editor_handler (GtkToggleButton *but, gpointer ptr) {
 	JackVST* jvst = (JackVST*) ptr;
 
 	if (gtk_toggle_button_get_active (but)) {
-		bool popup = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(editor_checkbox));
-		if (! fst_run_editor(jvst->fst, popup)) return;
-		if (! popup) return;
-		
-		// Create GTK Socket (Widget)
-		gtk_socket = gtk_socket_new ();
-		gtk_widget_set_can_default(gtk_socket, TRUE);
-
-		// Add Widget socket to vBox
-		socket_align = gtk_alignment_new(0.5, 0, 0, 0);
-		gtk_container_add(GTK_CONTAINER(socket_align), gtk_socket);
-		gtk_box_pack_start (GTK_BOX(vpacker), socket_align, TRUE, FALSE, 0);
-
-		gtk_widget_set_size_request(gtk_socket, jvst->fst->width, jvst->fst->height);
-		gtk_socket_add_id (GTK_SOCKET (gtk_socket), GDK_POINTER_TO_XID (jvst->fst->xid) );
-
-#ifdef MOVING_WINDOWS_WORKAROUND
-		g_signal_connect (G_OBJECT(window), "configure-event", G_CALLBACK(configure_handler), jvst);
-#endif
-
-		fst_show_editor(jvst->fst);
-		gtk_widget_show(socket_align);
-		gtk_widget_show(gtk_socket);
-	} else if (! jvst->fst->editor_popup) {
-		fst_call ( jvst->fst, EDITOR_CLOSE );
+	    fst_run_editor(jvst->fst);
+	        return;
 	} else {
-		// For some reason window was closed before we reach this function
-		// That's mean GtkSocket is already destroyed
-		if ( jvst->fst->window ) {
-			gtk_widget_hide(gtk_socket);
-			fst_call ( jvst->fst, EDITOR_CLOSE );
-			gtk_widget_set_size_request(gtk_socket, -1, -1);
-			gtk_widget_destroy(gtk_socket);
-		}
-		gtk_widget_destroy(socket_align);
-		gtk_window_resize(GTK_WINDOW(window), 1, 1);
+	    fst_call ( jvst->fst, EDITOR_CLOSE );
 	}
 }
 
@@ -756,20 +724,6 @@ idle_cb(JackVST *jvst) {
 
 	// Adapt button state to Wine window
 	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(editor_button), jvst->fst->window ? TRUE : FALSE);
-
-	// Editor Window is embedded and want resize window
-	if ( jvst->fst->editor_popup && jvst->fst->window && jvst->want_resize) {
-		jvst->want_resize = FALSE;
-		gtk_widget_set_size_request(gtk_socket, jvst->fst->width, jvst->fst->height);
-	}
-
-#ifdef HAVE_LASH
-	if ( ! jvst_lash_idle(jvst) ) {
-		gtk_main_quit();
-		return FALSE;
-	}
-#endif
-	return TRUE;
 }
 
 // Really ugly auxiliary function for create buttons ;-)
@@ -819,10 +773,6 @@ gtk_gui_start (JackVST* jvst) {
 	//----------------------------------------------------------------------------------
 	editor_button = make_img_button(GTK_STOCK_PROPERTIES, "Editor", TRUE, &editor_handler,
 		jvst, FALSE, hpacker);
-	editor_checkbox = gtk_check_button_new();
-	gtk_widget_set_tooltip_text(editor_checkbox, "Embedded Editor");
-	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(editor_checkbox), TRUE);
-	gtk_box_pack_start(GTK_BOX(hpacker), editor_checkbox, FALSE, FALSE, 0);
 	//----------------------------------------------------------------------------------
 	midi_learn_toggle = make_img_button(GTK_STOCK_DND, "MIDI Learn", TRUE, &learn_handler,
 		jvst, FALSE, hpacker);

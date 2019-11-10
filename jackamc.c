@@ -189,8 +189,6 @@ static void jvstamc_window_resize ( struct _AMC* amc, int32_t width, int32_t hei
 	jvst->fst->width = width;
 	jvst->fst->height = height;
 	jvst->fst->wantResize = TRUE;
-	/* Resize also GTK window in popup (embedded) mode */
-	if (jvst->fst->editor_popup) jvst->want_resize = TRUE;
 }
 
 static intptr_t jvstamc_get_sample_rate ( struct _AMC* amc ) {

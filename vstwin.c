@@ -24,7 +24,6 @@ fst_new () {
 	//fst->current_program = 0; - calloc done this
 	pthread_mutex_init (&(fst->event_call.lock), NULL);
 	pthread_cond_init (&(fst->event_call.called), NULL);
-//	fst->editor_popup = TRUE;
 
 	return fst;
 }
@@ -103,7 +102,6 @@ my_window_proc (HWND w, UINT msg, WPARAM wp, LPARAM lp) {
 			fst->window = NULL;
 			fst->plugin->dispatcher(fst->plugin, effEditClose, 0, 0, NULL, 0.0f);
 
-			if (fst->editor_popup) fst_error("Receive WM_CLOSE - WTF ?");
 		}
 		break;
 	case WM_NCDESTROY:
@@ -154,11 +152,9 @@ static void fst_resize_editor (FST *fst) {
 	int height = fst->height;
 	int width = fst->width;
 
-	if (! fst->editor_popup) {
-		// Add space window title height and borders
-		height += 24;
-		width += 6;
-	}
+	// Add space window title height and borders
+	height += 24;
+	width += 6;
 
 	SetWindowPos(fst->window, HWND_BOTTOM, 0, 0, width, height, SWP_STATECHANGED|
 		SWP_ASYNCWINDOWPOS|SWP_NOCOPYBITS|SWP_NOMOVE|SWP_NOZORDER|SWP_NOOWNERZORDER|SWP_DEFERERASE);
@@ -230,10 +226,9 @@ fst_call_dispatcher (FST *fst, int32_t opcode, int32_t index,
 }
 
 /*************************** Public (thread-safe) routines *****************************************/
-bool fst_run_editor (FST* fst, bool popup) {
+bool fst_run_editor (FST* fst) {
 	if (fst->window) return FALSE;
 
-	fst->editor_popup = popup;
 	fst_call (fst, EDITOR_OPEN);
 
 	// Check is we really created some window ;-)
@@ -463,9 +458,7 @@ static bool fst_create_editor (FST* fst) {
 		return FALSE;
 
 	HWND window;
-	if ((window = CreateWindowA ("FST", fst->handle->name, (fst->editor_popup) ? 
-		(WS_POPUP & ~WS_TABSTOP) :
-//		(WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX & ~WS_CAPTION) :
+	if ((window = CreateWindowA ("FST", fst->handle->name,
 		(WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME),
 		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
 		NULL, NULL, hInst, NULL)) == NULL)
@@ -488,13 +481,7 @@ static bool fst_create_editor (FST* fst) {
 	if (! SetPropA(window, "FST", fst))
 		fst_error ("cannot set GUI window property");
 
-	if (fst->editor_popup) {
-		SetWindowPos (window, 0, 0, 0, 0, 0, SWP_SHOWWINDOW|SWP_NOMOVE|SWP_NOOWNERZORDER|
-			SWP_NOREDRAW|SWP_NOCOPYBITS|SWP_DEFERERASE|SWP_NOZORDER|SWP_STATECHANGED);
-		UpdateWindow(window);
-	} else {
-		fst_show_editor(fst);
-	}
+	fst_show_editor(fst);
 
 	fst->xid = GetPropA (window, "__wine_x11_whole_window");
 //	fst_error("And xid = %p", fst->xid );
