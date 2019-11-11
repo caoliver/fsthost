@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <glib.h>
+#include <ctype.h>
 #include "jackvst.h"
 
 #define ACK "<OK>"
@@ -44,7 +45,7 @@ static void get_program ( JackVST* jvst, int client_sock ) {
 }
 
 static struct PROTO_MAP proto_string_map[] = {
-	{ CMD_EDITOR_OPEN, "editor open" },
+	{ CMD_EDITOR_OPEN, "editor_open" },
 	{ CMD_EDITOR_CLOSE, "editor_close" },
 	{ CMD_LIST_PROGRAMS, "list_programs" },
 	{ CMD_GET_PROGRAM, "get_program" },
@@ -64,6 +65,69 @@ static enum PROTO_CMD proto_lookup ( const char* name ) {
 	return CMD_UNKNOWN;
 }
 
+static char *nexttoken(char **str)
+{
+    char *cursor = *str;
+    while (isspace(*cursor)) cursor++;
+    if (!*cursor) return NULL;
+
+    enum { qnormal, qbackslash, qoctal } state = qnormal;
+    char *out = *str;
+    char *tokstart = *str;
+    char ch;
+    char accum;
+    int octct;
+
+    while (ch = *cursor++) {
+	switch (state) {
+	case qnormal:
+	    if (ch == '\\') {
+		state = qbackslash;
+		continue;
+	    }
+	    if (isspace(ch)) {
+		*str = cursor;
+		*out = 0;
+		return tokstart;
+	    }
+	    *out++ = ch;
+	    continue
+	case qbackslash:
+		switch (ch) {
+		case 'n': ch = '\n'; break;
+		case 'r': ch = '\r'; break;
+		case 't': ch = '\t'; break;
+		case 'v': ch = '\v'; break;
+		case 'f': ch = '\f'; break;
+		default:
+		    if (ch >= '0' && ch <= '7') {
+			state = qoctal;
+			accum = ch-'0';
+			octct = 1;
+			continue;
+		    }
+		}
+	    *out++ = ch;
+	    state = qnormal;
+	    continue;
+	case qoctal:
+	    if (ch < '0' || ch > '7' || octct == 3) {
+		*out++ = accum;
+		cursor--;
+		state = qnormal;
+	    } else {
+		accum = accum<<3 | ch-'0';
+		octct++;
+	    }
+	}
+    }
+    if (state == qoctal)
+	*out++ = accum;
+    *str = cursor - 1;
+    *out = 0;
+    return tokstart != out ? tokstart : NULL;
+}
+
 static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
         char msg[64];
         if ( ! serv_client_get_data ( client_sock, msg, sizeof msg ) )
@@ -71,43 +135,43 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 
 	printf ( "GOT MSG: %s\n", msg );
 
-	int value = 0;
-	char* sep = strchr ( msg, ':' );
-	if ( sep != NULL ) {
-		*sep = '\0';
-		value = strtol ( sep + 1, NULL, 10 );
-	}
+	char *msgptr = msg;
+	char *cmdtok = nexttoken(&msgptr);
 
-	switch ( proto_lookup ( msg ) ) {
-	case CMD_EDITOR_OPEN:
+	if (cmdtok) {
+	    switch ( proto_lookup ( cmdtok ) ) {
+	    case CMD_EDITOR_OPEN:
 		fst_run_editor ( jvst->fst );
 		break;
-	case CMD_EDITOR_CLOSE:
+	    case CMD_EDITOR_CLOSE:
 		fst_call ( jvst->fst, EDITOR_CLOSE );
 		break;
-	case CMD_LIST_PROGRAMS:
+	    case CMD_LIST_PROGRAMS:
 		list_programs ( jvst, client_sock );
 		break;
-	case CMD_GET_PROGRAM:
+	    case CMD_GET_PROGRAM:
 		get_program ( jvst, client_sock );
 		break;
-	case CMD_SET_PROGRAM:
-		fst_program_change ( jvst->fst, value );
+	    case CMD_SET_PROGRAM:
+		cmdtok = nexttoken(&msgptr);
+		fst_program_change ( jvst->fst,
+				     cmdtok ? strtol(cmdtok, NULL, 10) : 0 );
 		break;
-	case CMD_SUSPEND:
+	    case CMD_SUSPEND:
 		jvst_bypass ( jvst, true );
 		break;
-	case CMD_RESUME:
+	    case CMD_RESUME:
 		jvst_bypass ( jvst, false );
 		break;
-	case CMD_KILL:
+	    case CMD_KILL:
 		jvst_quit ( jvst );
 		break;
-	case CMD_UNKNOWN:
-	default:
+	    case CMD_UNKNOWN:
+	    default:
 		printf ( "Unknown command: %s\n", msg );
+	    }
 	}
-
+	
 	// Send ACK
 	serv_send_client_data ( client_sock, ACK, strlen(ACK) );
 
