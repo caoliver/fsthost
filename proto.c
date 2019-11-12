@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <strings.h>
+#include <ctype.h>
 
 #include "jfst/node.h"
 #include "log/log.h"
@@ -204,25 +205,84 @@ typedef struct {
 	bool done;
 } CMD;
 
+static char *nexttoken(char **str)
+{
+    char *cursor = *str;
+    while (isspace(*cursor)) cursor++;
+    if (!*cursor) return NULL;
+
+    enum { qnormal, qbackslash, qoctal } state = qnormal;
+    char *out = *str;
+    char *tokstart = *str;
+    char ch;
+    char accum;
+    int octct;
+
+    while (ch = *cursor++) {
+	switch (state) {
+	case qnormal:
+	    if (ch == '\\') {
+		state = qbackslash;
+		continue;
+	    }
+	    if (isspace(ch)) {
+		*str = cursor;
+		*out = 0;
+		return tokstart;
+	    }
+	    *out++ = ch;
+	    continue;
+	case qbackslash:
+		switch (ch) {
+		case 'n': ch = '\n'; break;
+		case 'r': ch = '\r'; break;
+		case 't': ch = '\t'; break;
+		case 'v': ch = '\v'; break;
+		case 'f': ch = '\f'; break;
+		default:
+		    if (ch >= '0' && ch <= '7') {
+			state = qoctal;
+			accum = ch-'0';
+			octct = 1;
+			continue;
+		    }
+		}
+	    *out++ = ch;
+	    state = qnormal;
+	    continue;
+	case qoctal:
+	    if (ch < '0' || ch > '7' || octct == 3) {
+		*out++ = accum;
+		cursor--;
+		state = qnormal;
+	    } else {
+		accum = accum<<3 | ch-'0';
+		octct++;
+	    }
+	}
+    }
+    if (state == qoctal)
+	*out++ = accum;
+    *str = cursor - 1;
+    *out = 0;
+    return tokstart != out ? tokstart : NULL;
+}
+
 void msg2cmd( char* msg, CMD* cmd ) {
 	char* p = msg;
-	short i;
-	for ( i=0; i < 3; i++ ) {
-		switch ( i ) {
-			case 0: cmd->cmd = p; break;
-			case 1: cmd->plugin = p; break;
-			case 2: cmd->value = p; break;
-		}
+	char *token;
 
-		// Find and replace next token
-		while ( *p != '\0' ) {
-			p++; // assume at least one character token
-			if ( *p == ':' || *p == ' ' ) {
-				*p = '\0';
-				p++;
-				break;
-			}
-		}
+	cmd->cmd = "";
+	cmd->plugin = "";
+	cmd->value = "";
+
+	if (token = nexttoken(&p)) {
+	    cmd->cmd = token;
+	    if (token = nexttoken(&p)) {
+		cmd->plugin = token;
+		if (token = nexttoken(&p))
+		    cmd->value = token;
+	    }
 	}
 
 	cmd->proto_cmd = proto_lookup( cmd->cmd );
