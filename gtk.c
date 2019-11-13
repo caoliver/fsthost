@@ -634,7 +634,7 @@ channel_change (GtkComboBox *combo, JackVST *jvst) {
 	midi_filter_one_channel_set( &jvst->channel, channel );
 }
 
-static gboolean
+gboolean
 idle_cb(JackVST *jvst) {
 	FST* fst = (FST*) jvst->fst;
 	AEffect* plugin = fst->plugin;
@@ -689,8 +689,9 @@ idle_cb(JackVST *jvst) {
 
 		if (show_tooltip)
 			gtk_widget_set_tooltip_text(midi_learn_toggle, tooltip);
-		gtk_toggle_button_set_active( GTK_TOGGLE_BUTTON( midi_learn_toggle ), FALSE );
 	}
+	gtk_toggle_button_set_active( GTK_TOGGLE_BUTTON( midi_learn_toggle ),
+				      jvst->midi_learn ? TRUE : FALSE );
 
 	// If volume was changed by MIDI CC7 message
 	if (jvst->volume != -1) {

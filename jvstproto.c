@@ -6,6 +6,7 @@
 #include "jackvst.h"
 
 #define ACK "<OK>"
+#define NAK "<FAIL>"
 
 /* serv.c */
 int serv_get_sock ( uint16_t port );
@@ -24,9 +25,10 @@ static void list_programs ( JackVST* jvst, int client_sock ) {
 	int32_t i;
 	for ( i = 0; i < fst->plugin->numPrograms; i++ ) {
 		/* VST standard says that progName is 24 bytes but some plugs use more characters */
-		char progName[32];
+		char progName[64];
 		if ( fst->vst_version >= 2 ) {
-			fst_get_program_name(fst, i, progName, sizeof(progName));
+		    sprintf(progName, "%4d: ", i);
+			fst_get_program_name(fst, i, &progName[6], sizeof(progName));
 		} else {
 			/* FIXME:
 			So what ? nasty plugin want that we iterate around all presets ?
@@ -44,14 +46,49 @@ static void get_program ( JackVST* jvst, int client_sock ) {
 	serv_send_client_data ( client_sock, msg, strlen(msg) );
 }
 
+enum PROTO_CMD {
+	CMD_UNKNOWN,
+	CMD_EDITOR,
+	CMD_LIST_PROGRAMS,
+	CMD_LIST_PARAMS,
+	CMD_LIST_MIDI_MAP,
+	CMD_GET_PROGRAM,
+	CMD_SET_PROGRAM,
+	CMD_GET_CHANNEL,
+	CMD_SET_CHANNEL,
+	CMD_MIDI_LEARN,
+	CMD_SET_VOLUME,
+	CMD_GET_VOLUME,
+	CMD_SUSPEND,
+	CMD_RESUME,
+	CMD_LOAD,
+	CMD_SAVE,
+	CMD_HELP,
+	CMD_KILL
+};
+
+struct PROTO_MAP {
+	enum PROTO_CMD key;
+	const char* name;
+};
+
 static struct PROTO_MAP proto_string_map[] = {
-	{ CMD_EDITOR_OPEN, "editor_open" },
-	{ CMD_EDITOR_CLOSE, "editor_close" },
+	{ CMD_EDITOR, "editor" },
 	{ CMD_LIST_PROGRAMS, "list_programs" },
+	{ CMD_LIST_PARAMS, "list_params" },	// TODO
+	{ CMD_LIST_MIDI_MAP, "list_midi_map" },	// TODO
 	{ CMD_GET_PROGRAM, "get_program" },
 	{ CMD_SET_PROGRAM, "set_program" },
+	{ CMD_GET_CHANNEL, "get_channel" },
+	{ CMD_SET_CHANNEL, "set_channel" },
+	{ CMD_MIDI_LEARN, "midi_learn" },
+	{ CMD_SET_VOLUME, "set_volume" },
+	{ CMD_GET_VOLUME, "get_volume" },
 	{ CMD_SUSPEND, "suspend" },
 	{ CMD_RESUME, "resume" },
+	{ CMD_LOAD, "load" },
+	{ CMD_SAVE, "save" },
+	{ CMD_HELP, "help" },
 	{ CMD_KILL, "kill" },
 	{ CMD_UNKNOWN, NULL }
 };
@@ -91,7 +128,7 @@ static char *nexttoken(char **str)
 		return tokstart;
 	    }
 	    *out++ = ch;
-	    continue
+	    continue;
 	case qbackslash:
 		switch (ch) {
 		case 'n': ch = '\n'; break;
@@ -129,22 +166,75 @@ static char *nexttoken(char **str)
 }
 
 static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
+        char *result = ACK;
         char msg[64];
         if ( ! serv_client_get_data ( client_sock, msg, sizeof msg ) )
 		return false;
+	bool do_update = false;
 
 	printf ( "GOT MSG: %s\n", msg );
 
 	char *msgptr = msg;
 	char *cmdtok = nexttoken(&msgptr);
+	char *param = cmdtok ? nexttoken(&msgptr) : NULL;
+	char outbuf[64];
 
 	if (cmdtok) {
 	    switch ( proto_lookup ( cmdtok ) ) {
-	    case CMD_EDITOR_OPEN:
-		fst_run_editor ( jvst->fst );
+	    case CMD_SAVE:
+		if (!jvst_save_state(jvst, param))
+		    result = NAK;
 		break;
-	    case CMD_EDITOR_CLOSE:
-		fst_call ( jvst->fst, EDITOR_CLOSE );
+	    case CMD_LOAD:
+		if (jvst_load_state(jvst, param))
+		    do_update = true;
+		else
+		    result = NAK;
+		break;
+	    case CMD_EDITOR:
+		if (param && !strcasecmp(param, "open"))
+		    fst_run_editor ( jvst->fst );
+		else if (param && !strcasecmp(param, "close"))
+		    fst_call ( jvst->fst, EDITOR_CLOSE );
+		else {
+		    puts ( "Need param: open|close" );
+		    result = NAK;
+		}
+		break;
+	    case CMD_MIDI_LEARN:
+		do_update = true;
+		if ( param && !strcasecmp(param, "start") ) {
+		    jvst->midi_learn_CC = jvst->midi_learn_PARAM = -1;
+		    jvst->midi_learn = TRUE;
+		} else if ( param && !strcasecmp(param,"stop") ) {
+		    jvst->midi_learn = FALSE;
+		} else {
+			puts ( "Need param: start|stop" );
+			result = NAK;
+			do_update = false;
+		}
+		break;
+	    case CMD_GET_CHANNEL:
+		snprintf(outbuf, 63, "CHANNEL:%d\n",
+			 jvst->channel.redirect->channel);
+		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
+		break;
+	    case CMD_SET_CHANNEL:
+		if (param) {
+		    midi_filter_one_channel_set(&jvst->channel,
+						strtol(param, NULL, 10));
+		    do_update = true;
+		}
+		break;
+	    case CMD_GET_VOLUME:
+		snprintf(outbuf, 63, "VOLUME:%d\n", jvst_get_volume(jvst));
+		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
+		break;
+	    case CMD_SET_VOLUME:
+		if (param) {
+		    jvst_set_volume(jvst, strtol(param, NULL, 10));
+		    do_update = true;
+		}
 		break;
 	    case CMD_LIST_PROGRAMS:
 		list_programs ( jvst, client_sock );
@@ -152,16 +242,19 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	    case CMD_GET_PROGRAM:
 		get_program ( jvst, client_sock );
 		break;
-	    case CMD_SET_PROGRAM:
-		cmdtok = nexttoken(&msgptr);
-		fst_program_change ( jvst->fst,
-				     cmdtok ? strtol(cmdtok, NULL, 10) : 0 );
+	    case CMD_SET_PROGRAM: {
+		int pgm = param ? strtol(param, NULL, 10) : 0;
+		fst_program_change ( jvst->fst, pgm >= 0 ? pgm : 0 ) ;
+		do_update = true;
+	    }
 		break;
 	    case CMD_SUSPEND:
 		jvst_bypass ( jvst, true );
+		do_update = true;
 		break;
 	    case CMD_RESUME:
 		jvst_bypass ( jvst, false );
+		do_update = true;
 		break;
 	    case CMD_KILL:
 		jvst_quit ( jvst );
@@ -169,11 +262,15 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	    case CMD_UNKNOWN:
 	    default:
 		printf ( "Unknown command: %s\n", msg );
+		result = NAK;
 	    }
 	}
-	
+	// Is this a race?
+	if (do_update)
+	    idle_cb(jvst);
+
 	// Send ACK
-	serv_send_client_data ( client_sock, ACK, strlen(ACK) );
+	serv_send_client_data ( client_sock, result, strlen(result) );
 
 	return true;
 }
