@@ -421,9 +421,6 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		result = NAK;
 	    }
 	}
-	// Is this a race?
-//	if (do_update)
-//	    idle_cb(jvst);
 
 	// Send ACK
 	serv_send_client_data ( client_sock, result, strlen(result) );
