@@ -36,19 +36,21 @@ typedef struct {
 	bool bypassed;
 	bool editor; /* is open */
 	uint8_t channel;
+	int8_t transpose;
 	unsigned short volume;
 	int32_t program;
 	bool midi_learn;
 } ChangesLast;
 
 typedef enum {
-	CHANGE_QUIT	= 1 << 0,
-	CHANGE_BYPASS	= 1 << 1,
-	CHANGE_EDITOR	= 1 << 2,
-	CHANGE_CHANNEL	= 1 << 3,
-	CHANGE_VOLUME	= 1 << 4,
-	CHANGE_PROGRAM	= 1 << 5,
-	CHANGE_MIDILE	= 1 << 6
+	CHANGE_QUIT	 = 1 << 0,
+	CHANGE_BYPASS	 = 1 << 1,
+	CHANGE_EDITOR	 = 1 << 2,
+	CHANGE_CHANNEL	 = 1 << 3,
+	CHANGE_VOLUME	 = 1 << 4,
+	CHANGE_PROGRAM	 = 1 << 5,
+	CHANGE_MIDILE	 = 1 << 6,
+	CHANGE_TRANSPOSE = 1 << 7,
 } Changes;
 
 typedef struct {

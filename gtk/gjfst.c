@@ -729,6 +729,11 @@ idle_cb(GJFST *gjfst) {
 	if (changes & CHANGE_BYPASS)
 		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gjfst->bypass_button), jfst->bypassed);
 
+	// Changes - Transposition
+	if (changes & CHANGE_TRANSPOSE) {
+	    gtk_spin_button_set_value ( GTK_SPIN_BUTTON(gjfst->transposition_spin), midi_filter_transposition_get(jfst->transposition) );
+	}
+
 	// Changes - MIDI learn
 	if ( changes & CHANGE_MIDILE ) {
 		MidiLearn* ml = &jfst->midi_learn;

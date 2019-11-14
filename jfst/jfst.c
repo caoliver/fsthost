@@ -278,6 +278,13 @@ Changes jfst_detect_changes( JFST* jfst, ChangesLast* L ) {
 		ret |= CHANGE_BYPASS;
 	}
 
+	if ( L->transpose !=
+	     midi_filter_transposition_get(jfst->transposition) ) {
+		L->transpose =
+		    midi_filter_transposition_get(jfst->transposition);
+		ret |= CHANGE_TRANSPOSE;
+	}
+
 	if ( L->program != fst_get_program(jfst->fst) ) {
 		L->program = fst_get_program(jfst->fst);
 		ret |= CHANGE_PROGRAM;

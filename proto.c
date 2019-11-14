@@ -57,7 +57,8 @@ static void list_params ( JFST* jfst, ServClient* serv_client ) {
 	int32_t i;
 	for ( i = 0; i < fst_num_params(fst); i++ ) {
 		fst_call_dispatcher ( fst, effGetParamName, i, 0, paramName, 0 );
-		jfst_send_fmt(jfst, serv_client, "%d:%s", i, paramName);
+		jfst_send_fmt(jfst, serv_client, "%d:%s = %f", i, paramName,
+			      fst->plugin->getParameter(fst->plugin, i));
         }
 }
 
@@ -73,12 +74,57 @@ static void list_midi_map ( JFST* jfst, ServClient* serv_client ) {
 			continue;
 
 		fst_call_dispatcher( fst, effGetParamName, paramIndex, 0, name, 0 );
-		jfst_send_fmt(jfst, serv_client, "%d:%s", cc, name);
+		jfst_send_fmt(jfst, serv_client, "%d:%s = %f", cc, name,
+		    fst->plugin->getParameter(fst->plugin, paramIndex));
 	}
 }
 
+static void get_midi_map(JFST *jfst, int cc_num, ServClient *serv_client)
+{
+    char name[FST_MAX_PARAM_NAME];
+
+    MidiLearn* ml = &jfst->midi_learn;
+    FST* fst = jfst->fst;
+    cc_num = cc_num < 0 ? 0 : cc_num > 127 ? 127 : cc_num;
+    int32_t paramIndex = ml->map[cc_num];
+    if ( paramIndex < 0 || paramIndex >= fst_num_params(fst) ) {
+	jfst_send_fmt(jfst, serv_client, "%d -> UNASSIGNED", cc_num);
+    } else {
+	fst_call_dispatcher( fst, effGetParamName, paramIndex, 0, name, 0 );
+	jfst_send_fmt(jfst, serv_client, "%d -> %d:%s", cc_num, paramIndex,
+		      name);
+    }
+}
+
+static void set_midi_map(JFST *jfst, int cc_num, int parm_no)
+{
+    FST* fst = jfst->fst;
+    MidiLearn* ml = &jfst->midi_learn;
+    cc_num = cc_num < 0 ? 0 : cc_num > 127 ? 127 : cc_num;
+    if (parm_no >= -1 && parm_no < fst->plugin->numParams)
+	ml->map[cc_num] = parm_no;
+}
+
+
 static void get_program ( JFST* jfst, ServClient* serv_client ) {
 	jfst_send_fmt( jfst, serv_client, "PROGRAM:%d", fst_get_program(jfst->fst) );
+}
+
+static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client ) {
+    char name[FST_MAX_PARAM_NAME];
+    FST* fst = jfst->fst;
+    parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
+	fst_num_params(fst) : parm_no;
+    fst_call_dispatcher( fst, effGetParamName, parm_no, 0, name, 0 );
+    jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name,
+		  fst->plugin->getParameter(fst->plugin, parm_no));
+}
+
+static void set_param ( JFST * jfst, int parm_no, float value) {
+    FST* fst = jfst->fst;
+    parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
+	fst_num_params(fst) : parm_no;
+    fst->plugin->setParameter(fst->plugin, parm_no, value);
 }
 
 static void get_channel ( JFST* jfst, ServClient* serv_client ) {
@@ -87,6 +133,16 @@ static void get_channel ( JFST* jfst, ServClient* serv_client ) {
 
 static void get_volume ( JFST* jfst, ServClient* serv_client ) {
 	jfst_send_fmt( jfst, serv_client, "VOLUME:%d", jfst_get_volume(jfst) );
+}
+
+static void get_transpose ( JFST* jfst, ServClient* serv_client ) {
+	jfst_send_fmt( jfst, serv_client, "TRANSPOSE:%d",
+		       midi_filter_transposition_get(jfst->transposition) );
+}
+
+static void set_transpose ( JFST* jfst, int trnspos, ServClient* serv_client ) {
+    trnspos =  trnspos < -36 ? -36 : trnspos > 36 ? 36 : trnspos;
+    midi_filter_transposition_set(jfst->transposition, trnspos);
 }
 
 static void cpu_usage ( ServClient* serv_client ) {
@@ -136,13 +192,19 @@ typedef enum {
 	CMD_LIST_PROGRAMS,
 	CMD_LIST_PARAMS,
 	CMD_LIST_MIDI_MAP,
+	CMD_GET_MIDI_MAP,
+	CMD_SET_MIDI_MAP,
 	CMD_GET_PROGRAM,
 	CMD_SET_PROGRAM,
+	CMD_GET_PARAM,
+	CMD_SET_PARAM,
 	CMD_GET_CHANNEL,
 	CMD_SET_CHANNEL,
 	CMD_MIDI_LEARN,
 	CMD_SET_VOLUME,
 	CMD_GET_VOLUME,
+	CMD_GET_TRANSPOSE,
+	CMD_SET_TRANSPOSE,
 	CMD_SUSPEND,
 	CMD_RESUME,
 	CMD_LOAD,
@@ -165,13 +227,19 @@ static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_LIST_PROGRAMS, "list_programs" },
 	{ CMD_LIST_PARAMS, "list_params" },
 	{ CMD_LIST_MIDI_MAP, "list_midi_map" },
+	{ CMD_GET_MIDI_MAP, "get_midi_map" },
+	{ CMD_SET_MIDI_MAP, "set_midi_map" },
 	{ CMD_GET_PROGRAM, "get_program" },
 	{ CMD_SET_PROGRAM, "set_program" },
+	{ CMD_GET_PARAM, "get_param" },
+	{ CMD_SET_PARAM, "set_param" },
 	{ CMD_GET_CHANNEL, "get_channel" },
 	{ CMD_SET_CHANNEL, "set_channel" },
 	{ CMD_MIDI_LEARN, "midi_learn" },
 	{ CMD_SET_VOLUME, "set_volume" },
 	{ CMD_GET_VOLUME, "get_volume" },
+	{ CMD_SET_TRANSPOSE, "set_transpose" },
+	{ CMD_GET_TRANSPOSE, "get_transpose" },
 	{ CMD_SUSPEND, "suspend" },
 	{ CMD_RESUME, "resume" },
 	{ CMD_LOAD, "load" },
@@ -197,6 +265,7 @@ typedef struct {
 	const char* cmd;
 	const char* plugin;
 	const char* value;
+	const char* value2;
 	PROTO_CMD proto_cmd;
 	JFST* jfst;
 	/* return */
@@ -275,13 +344,17 @@ void msg2cmd( char* msg, CMD* cmd ) {
 	cmd->cmd = "";
 	cmd->plugin = "";
 	cmd->value = "";
+	cmd->value2 = "";
 
 	if (token = nexttoken(&p)) {
 	    cmd->cmd = token;
 	    if (token = nexttoken(&p)) {
 		cmd->plugin = token;
-		if (token = nexttoken(&p))
+		if (token = nexttoken(&p)) {
 		    cmd->value = token;
+		    if (token = nexttoken(&p))
+			cmd->value2 = token;
+		}
 	    }
 	}
 
@@ -333,11 +406,32 @@ void jfst_proto_dispatch( ServClient* serv_client, CMD* cmd ) {
 	case CMD_SET_PROGRAM:
 		fst_set_program ( jfst->fst, strtol(value, NULL, 10) );
 		break;
+	case CMD_GET_PARAM:
+	        get_param ( jfst, strtol(value, NULL, 10), serv_client );
+		break;
+	case CMD_SET_PARAM:
+	        set_param(jfst, strtol(value, NULL, 10),
+			  strtof(cmd->value2, NULL));
+		break;
+	case CMD_GET_MIDI_MAP:
+	        get_midi_map ( jfst, strtol(value, NULL, 10), serv_client );
+		break;
+	case CMD_SET_MIDI_MAP:
+	        set_midi_map(jfst, strtol(value, NULL, 10),
+			  cmd->value2[0] ?
+			     strtol(cmd->value2, NULL, 10) : -1);
+		break;
 	case CMD_GET_CHANNEL:
 		get_channel ( jfst, serv_client );
 		break;
 	case CMD_SET_CHANNEL:
 		midi_filter_one_channel_set( &jfst->channel, strtol(value, NULL, 10) );
+		break;
+	case CMD_GET_TRANSPOSE:
+	        get_transpose( jfst, serv_client );
+		break;
+	case CMD_SET_TRANSPOSE:
+	        set_transpose( jfst, strtol(value, NULL, 10), serv_client );
 		break;
 	case CMD_MIDI_LEARN:
 		if ( !strcasecmp(value, "start") ) {
