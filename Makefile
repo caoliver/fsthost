@@ -9,7 +9,7 @@ LBITS              := $(shell getconf LONG_BIT)
 LAST_EXISTS := 'no'
 WINEDIR		   := /usr/local/wine/32
 
-EE		   := 1
+EE		   := 0
 
 # Modules
 PKG_CONFIG_MODULES := jack
