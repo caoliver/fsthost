@@ -336,6 +336,12 @@ load_handler (GtkToggleButton *but, gpointer ptr) {
 	gtk_spin_button_set_value(GTK_SPIN_BUTTON(transposition_spin), midi_filter_transposition_get(jvst->transposition));
 }
 
+void refresh_transposition_spin(JackVST* jvst)
+{
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(transposition_spin),
+			      midi_filter_transposition_get(jvst->transposition));
+}
+
 #ifdef MOVING_WINDOWS_WORKAROUND
 /* Workaround for moving problem - some plugins menus were stay where window was opened */
 static gboolean
@@ -728,6 +734,7 @@ idle_cb(JackVST *jvst) {
 
 	// Adapt button state to Wine window
 	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(editor_button), jvst->fst->window ? TRUE : FALSE);
+	return TRUE;
 }
 
 // Really ugly auxiliary function for create buttons ;-)
