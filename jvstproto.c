@@ -415,6 +415,7 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		break;
 	    case CMD_HELP:
 		dohelp(client_sock);
+		break;
 	    case CMD_UNKNOWN:
 	    default:
 		printf ( "Unknown command: %s\n", msg );
