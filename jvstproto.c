@@ -155,6 +155,7 @@ enum PROTO_CMD {
 	CMD_LOAD,
 	CMD_SAVE,
 	CMD_HELP,
+	CMD_QUIT,
 	CMD_KILL
 };
 
@@ -186,6 +187,7 @@ static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_LOAD, "load" },
 	{ CMD_SAVE, "save" },
 	{ CMD_HELP, "help" },
+	{ CMD_QUIT, "quit" },
 	{ CMD_KILL, "kill" },
 	{ CMD_UNKNOWN, NULL }
 };
@@ -280,7 +282,7 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		return false;
 	bool do_update = false;
 
-	printf ( "GOT MSG: %s\n", msg );
+//	printf ( "GOT MSG: %s\n", msg );
 
 	char *msgptr = msg;
 	char *cmdtok = nexttoken(&msgptr);
@@ -290,6 +292,9 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 
 	if (cmdtok) {
 	    switch ( proto_lookup ( cmdtok ) ) {
+	    case CMD_QUIT:
+		close ( client_sock );
+		return false;
 	    case CMD_LIST_PARAMS:
 		list_params(jvst, client_sock);
 		break;

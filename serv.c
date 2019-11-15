@@ -89,12 +89,6 @@ bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len ) {
 	strip_trailing ( msg, '\n' );
 	strip_trailing ( msg, '\r' );
 
-	if ( !strcasecmp ( msg, "quit" ) ) {
-		puts ( "GOT QUIT" );
-		close ( client_sock );
-		return false;
-	}
-
 	return true;
 }
 
