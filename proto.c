@@ -31,14 +31,6 @@ static void jfst_send_fmt ( JFST* jfst, ServClient* serv_client, const char* fmt
 	va_end (ap);
 }
 
-static void list_plugins ( ServClient* serv_client ) {
-	JFST_NODE* jn = jfst_node_get_first();
-	for ( ; jn; jn = jn->next ) {
-		JFST* jfst = jn->jfst;
-		serv_client_send_data( serv_client, jfst->client_name );
-	}
-}
-
 static void list_programs ( JFST* jfst, ServClient* serv_client ) {
 	char progName[FST_MAX_PROG_NAME];
 
@@ -173,22 +165,9 @@ static void jfst_news ( JFST* jfst, ServClient* serv_client, Changes changes ) {
 		get_program( jfst, serv_client );
 }
 
-static void news ( ServClient* serv_client, bool all ) {
-	JFST_NODE* jn;
-	for ( jn = jfst_node_get_first(); jn; jn = jn->next ) {
-		/* Change for that client/jfst pair */
-		Changes C = jfst_detect_changes( jn->jfst, &(jn->changes_last[serv_client->number]) );
-
-		if ( all ) C = (unsigned int) -1;
-
-		jfst_news ( jn->jfst, serv_client, C );
-	}
-}
-
 typedef enum {
 	CMD_UNKNOWN,
 	CMD_EDITOR,
-	CMD_LIST_PLUGINS,
 	CMD_LIST_PROGRAMS,
 	CMD_LIST_PARAMS,
 	CMD_LIST_MIDI_MAP,
@@ -209,7 +188,6 @@ typedef enum {
 	CMD_RESUME,
 	CMD_LOAD,
 	CMD_SAVE,
-	CMD_NEWS,
 	CMD_CPU,
 	CMD_HELP,
 	CMD_QUIT,
@@ -223,7 +201,6 @@ struct PROTO_MAP {
 
 static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_EDITOR, "editor" },
-	{ CMD_LIST_PLUGINS, "list_plugins" },
 	{ CMD_LIST_PROGRAMS, "list_programs" },
 	{ CMD_LIST_PARAMS, "list_params" },
 	{ CMD_LIST_MIDI_MAP, "list_midi_map" },
@@ -244,7 +221,6 @@ static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_RESUME, "resume" },
 	{ CMD_LOAD, "load" },
 	{ CMD_SAVE, "save" },
-	{ CMD_NEWS, "news" },
 	{ CMD_CPU, "cpu" },
 	{ CMD_HELP, "help" },
 	{ CMD_QUIT, "quit" },
@@ -263,7 +239,6 @@ static PROTO_CMD proto_lookup ( const char* name ) {
 
 typedef struct {
 	const char* cmd;
-	const char* plugin;
 	const char* value;
 	const char* value2;
 	PROTO_CMD proto_cmd;
@@ -342,19 +317,15 @@ void msg2cmd( char* msg, CMD* cmd ) {
 	char *token;
 
 	cmd->cmd = "";
-	cmd->plugin = "";
 	cmd->value = "";
 	cmd->value2 = "";
 
 	if (token = nexttoken(&p)) {
 	    cmd->cmd = token;
 	    if (token = nexttoken(&p)) {
-		cmd->plugin = token;
-		if (token = nexttoken(&p)) {
-		    cmd->value = token;
-		    if (token = nexttoken(&p))
-			cmd->value2 = token;
-		}
+		cmd->value = token;
+		if (token = nexttoken(&p))
+		    cmd->value2 = token;
 	    }
 	}
 
@@ -472,9 +443,6 @@ void fsthost_proto_dispatch ( ServClient* serv_client, CMD* cmd ) {
 	cmd->ack = cmd->done = true;
 
 	switch ( cmd->proto_cmd ) {
-	case CMD_LIST_PLUGINS:
-		list_plugins ( serv_client );
-		break;
 	case CMD_CPU:
 		cpu_usage( serv_client );
 		break;
@@ -483,14 +451,6 @@ void fsthost_proto_dispatch ( ServClient* serv_client, CMD* cmd ) {
 		break;
 	case CMD_HELP:
 		help( serv_client );
-		break;
-	case CMD_NEWS:
-		// NOTE: in fact plugin here mean value
-		if ( !strcasecmp(cmd->plugin, "all") ) {
-			news( serv_client, true );
-		} else {
-			news( serv_client, false );
-		}
 		break;
 	case CMD_UNKNOWN:
 		log_error ( "GOT INVALID CMD: %s", cmd->proto_cmd );
@@ -506,18 +466,6 @@ void fsthost_proto_dispatch ( ServClient* serv_client, CMD* cmd ) {
 	}
 }
 
-static JFST_NODE* jfst_node_get_by_name( const char* name ) {
-	if ( name == '\0' ) return NULL;
-
-	JFST_NODE* jn = jfst_node_get_first();
-	for ( ; jn; jn = jn->next ) {
-		JFST* jfst = jn->jfst;
-		if ( !strcmp( jfst->client_name, name) )
-			return jn;
-	}
-	return NULL;
-}
-
 static bool handle_client_callback ( ServClient* serv_client, char* msg ) {
 	CMD cmd;
 	msg2cmd( msg, &cmd );
@@ -525,12 +473,7 @@ static bool handle_client_callback ( ServClient* serv_client, char* msg ) {
 	fsthost_proto_dispatch( serv_client, &cmd );
 	if ( cmd.done ) goto quit;
 
-	JFST_NODE* jn = jfst_node_get_by_name( cmd.plugin );
-	if ( ! jn ) {
-		log_error( "Invalid plugin name \"%s\"", cmd.plugin );
-		goto quit;
-	}
-
+	JFST_NODE* jn = jfst_node_get_first();
 	cmd.jfst = jn->jfst;
 	jfst_proto_dispatch( serv_client, &cmd );
 

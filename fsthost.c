@@ -42,7 +42,7 @@ GMainLoop* g_main_loop;
 #define APPNAME "fsthost"
 #define APPNAME_ARCH APPNAME ARCH
 
-#define MAX_PLUGS 32
+#define MAX_PLUGS 1
 #define LOOP_INT 100 // 100ms
 
 /* lash.c */
