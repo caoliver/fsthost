@@ -14,10 +14,6 @@ static Serv* serv = NULL;
 /* fsthost.c */
 extern void fsthost_quit();
 
-/* cpuusage.c */
-extern void CPUusage_init();
-extern double CPUusage_getCurrentValue();
-
 static void jfst_send_fmt ( JFST* jfst, ServClient* serv_client, const char* fmt, ... ) {
 	va_list ap;
 	char msg[512];
@@ -137,34 +133,6 @@ static void set_transpose ( JFST* jfst, int trnspos, ServClient* serv_client ) {
     midi_filter_transposition_set(jfst->transposition, trnspos);
 }
 
-static void cpu_usage ( ServClient* serv_client ) {
-	char msg[16];
-	snprintf( msg, sizeof msg, "%g", CPUusage_getCurrentValue() );
-	serv_client_send_data ( serv_client, msg );
-}
-
-static void jfst_news ( JFST* jfst, ServClient* serv_client, Changes changes ) {
-	if ( changes & CHANGE_BYPASS )
-		jfst_send_fmt( jfst, serv_client, "BYPASS:%d", jfst->bypassed );
-
-	if ( changes & CHANGE_EDITOR )
-		jfst_send_fmt( jfst, serv_client, "EDITOR:%d", (bool) jfst->fst->window );
-
-	if ( changes & CHANGE_CHANNEL )
-		get_channel(jfst, serv_client);
-
-	if ( changes & CHANGE_VOLUME )
-		get_volume(jfst, serv_client);
-
-	if ( changes & CHANGE_MIDILE ) {
-		MidiLearn* ml = &jfst->midi_learn;
-		jfst_send_fmt( jfst, serv_client, "MIDI_LEARN:%d", ml->wait );
-	}
-
-	if ( changes & CHANGE_PROGRAM )
-		get_program( jfst, serv_client );
-}
-
 typedef enum {
 	CMD_UNKNOWN,
 	CMD_EDITOR,
@@ -188,7 +156,6 @@ typedef enum {
 	CMD_RESUME,
 	CMD_LOAD,
 	CMD_SAVE,
-	CMD_CPU,
 	CMD_HELP,
 	CMD_QUIT,
 	CMD_KILL
@@ -221,7 +188,6 @@ static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_RESUME, "resume" },
 	{ CMD_LOAD, "load" },
 	{ CMD_SAVE, "save" },
-	{ CMD_CPU, "cpu" },
 	{ CMD_HELP, "help" },
 	{ CMD_QUIT, "quit" },
 	{ CMD_KILL, "kill" },
@@ -443,9 +409,6 @@ void fsthost_proto_dispatch ( ServClient* serv_client, CMD* cmd ) {
 	cmd->ack = cmd->done = true;
 
 	switch ( cmd->proto_cmd ) {
-	case CMD_CPU:
-		cpu_usage( serv_client );
-		break;
 	case CMD_QUIT:
 		cmd->quit = true;
 		break;
