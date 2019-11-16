@@ -745,6 +745,16 @@ bool jvst_load_sep_th (JackVST* jvst, const char* plug_spec, bool want_state_and
 	return st.loaded;
 }
 
+gboolean midi_learn_idle_cb(JackVST *jvst) {
+    if ( jvst->midi_learn &&
+	 jvst->midi_learn_CC >= 0 &&
+	 jvst->midi_learn_PARAM >= 0) {
+	jvst->midi_learn = FALSE;
+	jvst->midi_map[jvst->midi_learn_CC] = jvst->midi_learn_PARAM;
+    }
+    return true;
+}
+
 int WINAPI
 WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 	int		argc = -1;
@@ -893,6 +903,9 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 		gtk_gui_start(jvst);
 	} else {
 		puts("GUI Disabled - start GlibMainLoop");
+		g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, 500,
+				   (GSourceFunc) midi_learn_idle_cb, jvst,
+				   NULL);
 		g_main_loop_run ( glib_main_loop );
 	}
 #endif

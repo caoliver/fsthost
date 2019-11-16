@@ -85,7 +85,6 @@ static void get_midi_map(JackVST *jvst, int cc_num, int client_sock)
     FST* fst = jvst->fst;
     cc_num = cc_num < 0 ? 0 : cc_num > 127 ? 127 : cc_num;
     int32_t paramIndex = jvst->midi_map[cc_num];
-    dprintf(2, "paramIndex = %d\n", paramIndex);
     if ( paramIndex < 0 || paramIndex >= fst->plugin->numParams ) {
 	snprintf(msg, sizeof(msg), "%d -> UNASSIGNED", cc_num);
     } else {
