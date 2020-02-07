@@ -90,6 +90,10 @@ static void signal_handler (int signum) {
 		puts("Caught signal to terminate (SIGINT)");
 		g_idle_add( (GSourceFunc) jvst_quit, jvst);
 		break;
+	case SIGTERM:
+		puts("Caught signal to terminate (SIGTERM)");
+		g_idle_add( (GSourceFunc) jvst_quit, jvst);
+		break;
 	case SIGUSR1:
 		puts("Caught signal to save state (SIGUSR1)");
 		jvst_save_state(jvst, jvst->default_state_file);
@@ -857,6 +861,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 	sa.sa_flags = 0;
 	sa.sa_handler = &signal_handler;
 	sigaction(SIGINT, &sa, NULL); // clean quit
+	sigaction(SIGTERM, &sa, NULL); // clean quit
 	sigaction(SIGUSR1, &sa, NULL); // save state ( ladish support )
 	sigaction(SIGUSR2, &sa, NULL); // open editor
 
