@@ -6,6 +6,7 @@
 #include <arpa/inet.h> //inet_addr
 #include <poll.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 
 #include "log/log.h"
 #include "serv.h"
@@ -17,28 +18,6 @@
 static void strip_trailing ( char* string, char chr ) {
 	char* c = strrchr ( string, chr );
 	if ( c ) *c = '\0';
-}
-
-static bool serv_save_port_number ( Serv* serv ) {
-	char path[64];
-
-	mkdir ( SERV_PORT_DIR, 0777 );
-
-	pid_t pid = getpid();
-	snprintf( path, sizeof path, "%s/%d.%d.port", SERV_PORT_DIR, pid, serv->port );
-
-	FILE* f = fopen(path, "w");
-	if ( ! f ) {
-		ERROR ( "Can't open file: %s", path );
-		return false;
-	}
-
-	fprintf( f, "%d", serv->port );
-	fclose(f);
-
-	serv->port_file = strdup( path );
-
-	return true;
 }
 
 static void serv_client_close ( ServClient* client ) {
@@ -76,11 +55,9 @@ static void serv_client_get_data ( ServClient* client ) {
 static int serv_get_client_fd ( Serv* serv ) {
 	//Accept and incoming connection
 	INFO("Waiting for incoming connections...");
-	int c = sizeof(struct sockaddr_in);
      
 	//accept connection from an incoming client
-	struct sockaddr_in client;
-	int client_sock = accept(serv->fd, (struct sockaddr *)&client, (socklen_t*)&c);
+	int client_sock = accept(serv->fd, NULL, NULL);
 	if (client_sock < 0) {
 		ERROR("accept failed");
 		return 0;
@@ -107,59 +84,72 @@ static void serv_client_open ( Serv* serv ) {
 	}
 }
 
-Serv* serv_init ( uint16_t port, serv_client_callback cb ) {
-	struct sockaddr_in server;
-	socklen_t addrlen = sizeof(server);
+struct sockaddr_un server_un;
 
-	//Create listener socket
-	int fd = socket(AF_INET , SOCK_STREAM , 0);
+Serv* serv_init ( const char *name, serv_client_callback cb ) {
+    int fd ;
+    
+    if (*name == '/') {
+	fd = socket(AF_UNIX , SOCK_STREAM , 0);
 	if (fd == -1) {
-		ERROR("Could not create socket");
-		return NULL;
+	    ERROR("Could not create socket");
+	    return NULL;
 	}
 	INFO("Socket created");
-
-	//Prepare the sockaddr_in structure
+	socklen_t addrlen = strlen(name);
+	if (addrlen > sizeof(server_un.sun_path))
+	    addrlen = sizeof(server_un.sun_path) - 1;
+	memcpy(server_un.sun_path, name, addrlen);
+	server_un.sun_family = AF_UNIX;
+	unlink(server_un.sun_path);
+	if (bind(fd, (struct sockaddr *)&server_un,
+		 sizeof(server_un)) != 0) {
+	    ERROR("bind failed. Error");
+	    close(fd);
+	    return NULL;
+	}
+	INFO("Serv start on port: %s", server_un.sun_path);
+    } else {
+	fd = socket(AF_INET , SOCK_STREAM , 0);
+	if (fd == -1) {
+	    ERROR("Could not create socket");
+	    return NULL;
+	}
+	INFO("Socket created");
+	struct sockaddr_in server;
+	socklen_t addrlen = sizeof(server);
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl( INADDR_ANY );
-	server.sin_port = htons( port );
-
-	// Allow reuse this port ( TIME_WAIT issue )
+	server.sin_port = htons( atoi(name) );
 	int ofc = 1;
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &ofc, sizeof ofc);
-
-	//Bind
-	int ret = bind (fd,(struct sockaddr *) &server , addrlen);
-	if ( ret < 0 ) {
-		ERROR("bind failed. Error");
-		return NULL;
+ 
+	if ( bind (fd,(struct sockaddr *) &server , addrlen) < 0 ) {
+	    ERROR("bind failed. Error");
+	    close(fd);
+	    return NULL;
 	}
 	getsockname ( fd, (struct sockaddr *) &server , &addrlen );
+	INFO("Serv start on port: %d", ntohs(server.sin_port));
+    }
 
-	//Listen
-	listen(fd, SERV_MAX_CLIENTS);
+    listen(fd, SERV_MAX_CLIENTS);
 
-	// Alloc new object
-	Serv* serv = malloc( sizeof(Serv) );
-	serv->fd = fd;
-	serv->port = ntohs( server.sin_port );
+    Serv* serv = malloc( sizeof(Serv) );
+    serv->fd = fd;
 
-	// Init clients
-	int i;
-	for ( i = 0; i < SERV_MAX_CLIENTS; i++ ) {
-		ServClient* client = &serv->clients[i];
-		client->fd = -1;
-		client->number = i;
-		client->callback = cb;
-		client->closed = true;
-		client->data = NULL;
-	}
+    // Init clients
+    int i;
+    for ( i = 0; i < SERV_MAX_CLIENTS; i++ ) {
+	ServClient* client = &serv->clients[i];
+	client->fd = -1;
+	client->number = i;
+	client->callback = cb;
+	client->closed = true;
+	client->data = NULL;
+    }
 
-	serv_save_port_number( serv );
-
-	INFO("Serv start on port: %d", serv->port);
-
-	return serv;
+    return serv;
 }
 
 bool serv_client_send_data ( ServClient* client, const char* msg ) {
@@ -216,12 +206,7 @@ void serv_close (Serv* serv) {
 
 	// Close server
 	close ( serv->fd );
-
-	// Remove port file ( if exists ;-)
-	if ( serv->port_file ) {
-		unlink ( serv->port_file );
-		free ( serv->port_file );
-	}
-
+	if (server_un.sun_path[0] == '/')
+	    unlink(server_un.sun_path);
 	free(serv);
 }

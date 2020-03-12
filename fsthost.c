@@ -53,7 +53,7 @@ extern void jfst_lash_add (JFST* jfst);
 #endif
 
 /* fsthost_proto */
-extern bool fsthost_proto_init( uint16_t port_number );
+extern bool fsthost_proto_init( const char* port_name );
 extern void proto_poll();
 extern void proto_close();
 
@@ -248,7 +248,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 	JFST_DEFAULTS* def = jfst_get_defaults();
 
 { /* Parse options | init JFST NODES | Limit scope of some initial variables */
-	uint16_t	opt_port_number = 0;
+	char*		opt_port_name = 0;
 	int		pc = 0; // plugins count
 	int		sc = 0; // states count
 	LogLevel	log_level = LOG_INFO;
@@ -288,7 +288,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			case 'g': mode = GEN_DB; break;
 			case 'L': mode = LIST; break;
 			case 's': plugins[sc++].state = optarg; break;
-			case 'S': opt_have_serv=true; opt_port_number = strtol(optarg,NULL,10); break;
+			case 'S': opt_have_serv=true; opt_port_name = optarg; break;
 			case 'c': plugins[pc].client_name = optarg; break;
 			case 'k': def->channel = strtol(optarg, NULL, 10); break;
 			case 'i': def->maxIns = strtol(optarg, NULL, 10); break;
@@ -363,7 +363,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 
 	// Socket stuff
 	if ( opt_have_serv ) {
-		if ( ! fsthost_proto_init(opt_port_number) )
+		if ( ! fsthost_proto_init(opt_port_name) )
 			return 1;
 	}
 } /* end of "parse" scope */

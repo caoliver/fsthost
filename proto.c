@@ -450,9 +450,9 @@ quit:
 }
 
 /* Public functions */
-bool fsthost_proto_init ( uint16_t ctrl_port_number ) {
+bool fsthost_proto_init ( const char * ctrl_port_name ) {
 	log_info ( "Starting PROTO control server" );
-	serv = serv_init ( ctrl_port_number, handle_client_callback );
+	serv = serv_init ( ctrl_port_name, handle_client_callback );
 	if ( ! serv ) {
 		log_error ( "Cannot create PROTO socket :(" );
 		return false;

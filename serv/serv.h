@@ -6,7 +6,6 @@
 
 #define SERV_MAX_CLIENTS 3
 #define SERV_POLL_SIZE SERV_MAX_CLIENTS + 1
-#define SERV_PORT_DIR "/tmp/fsthost"
 
 typedef struct _ServClient ServClient;
 typedef bool (*serv_client_callback) ( ServClient* client, char* msg );
@@ -21,13 +20,11 @@ struct _ServClient {
 
 typedef struct _Serv {
 	int fd; /* descriptor */
-	uint16_t port;
 	void* serv_usr_data;
-	char* port_file;
 	ServClient clients[SERV_MAX_CLIENTS];
 } Serv;
 
-Serv* serv_init ( uint16_t port, serv_client_callback cb );
+Serv* serv_init ( const char *name, serv_client_callback cb );
 void serv_close (Serv* serv);
 void serv_poll (Serv* serv);
 bool serv_client_send_data ( ServClient* client, const char* msg );
