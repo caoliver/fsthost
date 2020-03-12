@@ -5,51 +5,63 @@
 #include <unistd.h>    //write
 #include <sys/socket.h>
 #include <arpa/inet.h> //inet_addr
+#include <sys/un.h>
+#include <stdlib.h>
 
-int serv_get_sock ( uint16_t port ) {
+struct sockaddr_un server_un;
+
+int serv_get_sock ( const char *sockname ) {
+    int socket_desc;
+    if ( *sockname == '/' ) {
+	socket_desc = socket(AF_UNIX , SOCK_STREAM , 0);
+	if (socket_desc < 0) goto err0;
+	socklen_t addrlen = strlen(sockname);
+	puts("Socket created");
+	if (addrlen > sizeof(server_un.sun_path))
+	    addrlen = sizeof(server_un.sun_path) - 1;
+	memcpy(server_un.sun_path, sockname, addrlen);
+	server_un.sun_family = AF_UNIX;
+	unlink(server_un.sun_path);
+	if (bind(socket_desc, (struct sockaddr *)&server_un,
+		 sizeof(server_un)) != 0)
+	    goto err1;
+	printf ("bind done: port %s\n", server_un.sun_path);
+    } else {
+	socket_desc = socket(AF_INET , SOCK_STREAM , 0);
+	if (socket_desc < 0) goto err0;
+	puts("Socket created");
 	struct sockaddr_in server;
 	socklen_t addrlen = sizeof(server);
-
-	//Create socket
-	int socket_desc = socket(AF_INET , SOCK_STREAM , 0);
-	if (socket_desc == -1) {
-		printf("Could not create socket");
-		return 2;
-	}
-	puts("Socket created");
-
-	//Prepare the sockaddr_in structure
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl( INADDR_ANY );
+	uint16_t port = atoi(sockname);
 	server.sin_port = htons( port );
-
-	// Allow reuse this port ( TIME_WAIT issue )
 	int ofc = 1;
 	setsockopt(socket_desc, SOL_SOCKET, SO_REUSEADDR, &ofc, sizeof ofc);
-
-	//Bind
-	int ret = bind (socket_desc,(struct sockaddr *) &server , addrlen);
-	if ( ret < 0 ) {
-		perror("bind failed. Error");
-		return 0;
-	}
+	if (bind (socket_desc,(struct sockaddr *) &server , addrlen) < 0)
+	    goto err1;
 	getsockname ( socket_desc, (struct sockaddr *) &server , &addrlen );
 	printf ("bind done, port: %d\n", ntohs( server.sin_port ) );
+    }
 
-	//Listen
-	listen(socket_desc , 3);
-     
-	return socket_desc;
+    listen(socket_desc , 3);
+    return socket_desc;
+    
+err0:
+    printf("Could not create socket");
+    return 0;
+err1:
+    close(socket_desc);
+    printf("Bind failed. Error");
+    return 0;
 }
 
 int serv_get_client ( int socket_desc ) {
 	//Accept and incoming connection
 	puts("Waiting for incoming connections...");
-	int c = sizeof(struct sockaddr_in);
      
 	//accept connection from an incoming client
-	struct sockaddr_in client;
-	int client_sock = accept(socket_desc, (struct sockaddr *)&client, (socklen_t*)&c);
+	int client_sock = accept(socket_desc, NULL, NULL);
 	if (client_sock < 0) {
 		perror("accept failed");
 		return 0;
@@ -94,4 +106,6 @@ bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len ) {
 
 void serv_close_socket ( int socket_desc ) {
 	close ( socket_desc );
+	if (server_un.sun_path[0] == '/')
+	    unlink(server_un.sun_path);
 }

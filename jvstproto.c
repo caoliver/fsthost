@@ -9,7 +9,7 @@
 #define NAK "<FAIL>"
 
 /* serv.c */
-int serv_get_sock ( uint16_t port );
+int serv_get_sock ( const char * );
 int serv_get_client ( int socket_desc );
 bool serv_send_client_data ( int client_sock, char* msg, int msg_len );
 bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len );
@@ -464,7 +464,7 @@ static bool handle_server_connection (GIOChannel *source, GIOCondition condition
 /* Public functions */
 bool jvst_proto_init ( JackVST* jvst ) {
 	puts ( "Starting JVST PROTO control server ..." );
-	serv_fd = serv_get_sock ( jvst->ctrl_port_number );
+	serv_fd = serv_get_sock ( jvst->ctrl_port_name );
 	if ( ! serv_fd ) {
 		fst_error ( "Cannot create CTRL socket :(" );
 		return false;

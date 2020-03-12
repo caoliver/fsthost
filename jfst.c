@@ -800,7 +800,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			case 'L': opt_list_plugins = true; break;
 			case 'B': jvst->bbt_sync = true; break;
 			case 's': jvst->default_state_file = optarg; break;
-			case 'S': serv=true; jvst->ctrl_port_number = strtol(optarg,NULL,10); break;
+			case 'S': serv=true; jvst->ctrl_port_name = optarg; break;
 			case 'c': jvst->client_name = optarg; break;
 			case 'k': midi_filter_one_channel_set(&jvst->channel, strtol(optarg, NULL, 10)); break;
 			case 'i': opt_maxIns = strtol(optarg, NULL, 10); break;
