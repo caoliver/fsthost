@@ -182,9 +182,14 @@ void serv_poll (Serv* serv) {
 
 	for ( i = 0; i < SERV_POLL_SIZE; i++ ) {
 		if ( fds[i].revents != POLLIN) {
-			if ( fds[i].revents != 0 )
-				ERROR("FDS: %d, Err revents = %d", i, fds[i].revents);
-
+		    if ( fds[i].revents != 0 ){
+			if (fds[i].revents & POLLHUP) {
+			    for ( int j = 1; j < SERV_POLL_SIZE; j++ )
+				if (serv->clients[j-1].fd == fds[i].fd)
+				    serv_client_close(&serv->clients[j-1]);
+			}
+			ERROR("FDS: %d, Err revents = %d", i, fds[i].revents);
+		    }
 			continue;
 		}
 
