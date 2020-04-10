@@ -136,6 +136,8 @@ static void edit_close_handler ( void* arg ) {
 	quit = true;
 }
 
+int idle_ms = LOOP_INT;
+
 static void cmdline2arg(int *argc, char ***pargv, LPSTR cmdline) {
 	LPWSTR* szArgList = CommandLineToArgvW(GetCommandLineW(), argc);
 	if (!szArgList) {
@@ -172,6 +174,7 @@ static void usage(char* appname) {
 	fprintf(stderr, fmt, "-L", "List plugins from XML info DB.");
 	fprintf(stderr, fmt, "-d xml_db_path", "Custom path to XML DB");
 	fprintf(stderr, fmt, "-b", "Start in bypass mode");
+	fprintf(stderr, fmt, "-I", "Idle loop delay (milliseconds)");
 #ifndef NO_GTK
 	fprintf(stderr, fmt, "-n", "Disable GTK GUI");
 #endif
@@ -207,7 +210,7 @@ main_loop() {
 		if ( ! fsthost_idle() )
 			break;
 
-		usleep ( LOOP_INT * 1000 );
+		usleep ( idle_ms * 1000 );
 	}
 }
 
@@ -276,7 +279,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
         // Parse command line options
 	cmdline2arg(&argc, &argv, cmdline);
 	short c;
-	while ( (c = getopt (argc, argv, "Abd:eEgs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:vV")) != -1) {
+	while ( (c = getopt (argc, argv, "Abd:eEgs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:I:vV")) != -1) {
 		switch (c) {
 			case 'A': def->want_port_aliases = true; break;
 			case 'b': def->bypassed = true; break;
@@ -302,6 +305,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			case 'N': def->sysex_want_notify = true; break;
 			case 'm': def->want_state_cc = strtol(optarg, NULL, 10); break;
 			case 'T': separate_threads = true;
+		case 'I': idle_ms = strtoul(optarg, NULL, 10);
 			case 'u': plugins[pc].uuid = optarg; break;
 			case 'U': def->sysex_uuid = strtol(optarg, NULL, 10); break;
 			case 'v': log_level = LOG_DEBUG; break;
@@ -309,6 +313,8 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			default: usage (argv[0]); return 1;
 		}
 	}
+	if (idle_ms < 1)
+	    idle_ms = 1;
 
 #ifdef NO_GTK
 	gtk_gui = false;
@@ -397,7 +403,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 #ifdef NO_GTK
 	main_loop();
 #else
-	g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, LOOP_INT, (GSourceFunc) fsthost_idle, NULL, NULL);
+	g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, idle_ms, (GSourceFunc) fsthost_idle, NULL, NULL);
 	if (gtk_gui) {
 		log_info( "Start GUI" );
 		gjfst_init(&argc, &argv);
