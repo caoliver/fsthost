@@ -19,6 +19,7 @@ void serv_close_socket ( int socket_desc );
 void jvst_quit(JackVST* jvst);
 
 static int serv_fd = 0;
+bool send_ack;
 
 static void list_programs ( JackVST* jvst, int client_sock ) {
 	FST* fst = jvst->fst;
@@ -42,17 +43,23 @@ static void list_programs ( JackVST* jvst, int client_sock ) {
 
 #define FST_MAX_PARAM_NAME 32
 
-static void list_params ( JackVST *jvst, int client_sock ) {
+static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 	char paramName[FST_MAX_PARAM_NAME];
 	char msg[80];
+
+	send_ack = !raw;
 
 	FST* fst = jvst->fst;
 	int32_t i;
 	for ( i = 0; i < fst->plugin->numParams; i++ ) {
 		fst_call_dispatcher(fst, effGetParamName, i, 0, paramName, 0);
-		snprintf(msg, sizeof(msg), "%d:%s = %f",
-			i, paramName,
-			fst->plugin->getParameter(fst->plugin, i));
+		float parm = fst->plugin->getParameter(fst->plugin, i);
+		if (raw)
+		    snprintf(msg, sizeof(msg), "%d:%s = 0x%X",
+			     i, paramName, htonl(*(uint32_t *)&parm));
+		else
+		    snprintf(msg, sizeof(msg), "%d:%s = %f",
+			     i, paramName, parm);
 		serv_send_client_data ( client_sock, msg, strlen(msg) );
         }
 }
@@ -103,24 +110,37 @@ static void set_midi_map(JackVST *jvst, int cc_num, int parm_no,
 	jvst->midi_map[cc_num] = parm_no;
 }
 
-static void set_param( JackVST *jvst, int ix, float value, int client_sock ) {
+static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
     	FST* fst = jvst->fst;
 	if (ix < 0 && ix >= fst->plugin->numParams)
 	    return;
-	value = value < 0 ? 0 : value > 1 ? 1 : value;
-	fst->plugin->setParameter(fst->plugin, ix, value);
+	float parmval;
+	if (value[0] == '0' && value[1] == 'x') {
+	    uint32_t uintval = ntohl(strtoul(value, NULL, 0));
+	    send_ack = false;
+	    parmval = *(float *)&uintval;
+	} else
+	    parmval = strtof(value, NULL);
+	parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
+	fst->plugin->setParameter(fst->plugin, ix, parmval);
 }
 
-static void get_param( JackVST *jvst, int ix, int client_sock ) {
+static void get_param( JackVST *jvst, int ix, int client_sock, bool raw ) {
     	char name[FST_MAX_PARAM_NAME];
 	char msg[80];
+
+	send_ack = !raw;
 
     	FST* fst = jvst->fst;
 	if (ix < 0 && ix >= fst->plugin->numParams)
 	    return;
 	fst_call_dispatcher( fst, effGetParamName, ix, 0, name, 0 );
-	snprintf(msg, sizeof(msg), "%d:%s = %f", ix, name,
-		 fst->plugin->getParameter(fst->plugin, ix));
+	float parm = fst->plugin->getParameter(fst->plugin, ix);
+	if (raw)
+	    snprintf(msg, sizeof(msg), "%d = 0x%X",
+			     ix, htonl(*(uint32_t *)&parm));
+	else
+	    snprintf(msg, sizeof(msg), "%d:%s = %f", ix, name, parm);
 	serv_send_client_data ( client_sock, msg, strlen(msg) );
 }
 
@@ -280,12 +300,26 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
         if ( ! serv_client_get_data ( client_sock, msg, sizeof msg ) )
 		return false;
 	bool do_update = false;
+	send_ack = true;
 
 //	printf ( "GOT MSG: %s\n", msg );
 
-	char *msgptr = msg;
-	char *cmdtok = nexttoken(&msgptr);
-	char *param = cmdtok ? nexttoken(&msgptr) : NULL;
+	char *p = msg;
+	char *token;
+
+	char *cmdtok = "";
+	char *param = "";
+	char *param2 = "";
+
+	if (token = nexttoken(&p)) {
+	    cmdtok = token;
+	    if (token = nexttoken(&p)) {
+		param = token;
+		if (token = nexttoken(&p))
+		    param2 = token;
+	    }
+	}
+
 	char outbuf[64];
 	unsigned int num_arg;
 
@@ -295,7 +329,7 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		close ( client_sock );
 		return false;
 	    case CMD_LIST_PARAMS:
-		list_params(jvst, client_sock);
+		list_params(jvst, client_sock, param[0]);
 		break;
 	    case CMD_LIST_MIDI_MAP:
 		list_midi_map(jvst, client_sock);
@@ -335,12 +369,11 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		break;
 	    case CMD_GET_PARAM:
 		num_arg = strtol(param, NULL, 10);
-		get_param(jvst, num_arg, client_sock);
+		get_param(jvst, num_arg, client_sock, param2[0]);
 		break;
 	    case CMD_SET_PARAM: {
-		char *tkn = nexttoken(&msgptr);
 		num_arg = strtol(param, NULL, 10);
-		set_param(jvst, num_arg, strtof(tkn ? tkn : "0", NULL),
+		set_param(jvst, num_arg, param2[0] ? param2 : "0",
 			  client_sock);
 		break;
 	    }
@@ -349,10 +382,10 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		get_midi_map(jvst, num_arg, client_sock);
 		break;
 	    case CMD_SET_MIDI_MAP: {
-		char *tkn = nexttoken(&msgptr);
 		num_arg = strtol(param, NULL, 10);
-		set_midi_map(jvst, num_arg, strtol(tkn ? tkn : "-1", NULL, 10),
-			  client_sock);
+		set_midi_map(jvst, num_arg,
+			     strtol(param2 ? param2 : "-1", NULL, 10),
+			     client_sock);
 		break;
 	    }
 	    case CMD_GET_CHANNEL:
@@ -422,13 +455,14 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		break;
 	    case CMD_UNKNOWN:
 	    default:
-		printf ( "Unknown command: %s\n", msg );
+		printf ( "Unknown command: %s\n", cmdtok );
 		result = NAK;
 	    }
 	}
 
 	// Send ACK
-	serv_send_client_data ( client_sock, result, strlen(result) );
+	if (send_ack)
+	    serv_send_client_data ( client_sock, result, strlen(result) );
 
 	return true;
 }
