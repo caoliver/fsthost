@@ -126,6 +126,7 @@ static void set_param ( JFST * jfst, int parm_no, char *value) {
 	parm_val = *(float *)&parm_int;
     } else
 	parm_val = strtof(value, NULL);
+    parm_val = parm_val < 0 ? 0 : parm_val > 1 ? 1 : parm_val;
     fst->plugin->setParameter(fst->plugin, parm_no, parm_val);
 }
 
