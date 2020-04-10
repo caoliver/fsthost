@@ -5,6 +5,7 @@
 
 #include "jfst/node.h"
 #include "log/log.h"
+#include <arpa/inet.h> // Host order <--> net order
 
 #define ACK "<OK>"
 #define NAK "<FAIL>"
@@ -17,12 +18,9 @@ extern void fsthost_quit();
 static void jfst_send_fmt ( JFST* jfst, ServClient* serv_client, const char* fmt, ... ) {
 	va_list ap;
 	char msg[512];
-	char new_fmt[128];
-
-	sprintf( new_fmt, "%s:%s", jfst->client_name, fmt );
 
 	va_start (ap, fmt);
-	vsnprintf (msg, sizeof msg, new_fmt, ap);
+	vsnprintf (msg, sizeof msg, fmt, ap);
 	serv_client_send_data ( serv_client, msg );
 	va_end (ap);
 }
@@ -38,15 +36,20 @@ static void list_programs ( JFST* jfst, ServClient* serv_client ) {
         }
 }
 
-static void list_params ( JFST* jfst, ServClient* serv_client ) {
+static void list_params ( JFST* jfst, ServClient* serv_client, bool raw ) {
 	char paramName[FST_MAX_PARAM_NAME];
 
 	FST* fst = jfst->fst;
 	int32_t i;
 	for ( i = 0; i < fst_num_params(fst); i++ ) {
 		fst_call_dispatcher ( fst, effGetParamName, i, 0, paramName, 0 );
-		jfst_send_fmt(jfst, serv_client, "%d:%s = %f", i, paramName,
-			      fst->plugin->getParameter(fst->plugin, i));
+		float parm = fst->plugin->getParameter(fst->plugin, i);
+		if (raw) {
+		    jfst_send_fmt(jfst, serv_client, "%d:%s = 0x%X",
+				  i, paramName, htonl(*(uint32_t *)&parm));
+		} else
+		    jfst_send_fmt(jfst, serv_client, "%d:%s = %f",
+				  i, paramName, parm);
         }
 }
 
@@ -98,21 +101,32 @@ static void get_program ( JFST* jfst, ServClient* serv_client ) {
 	jfst_send_fmt( jfst, serv_client, "PROGRAM:%d", fst_get_program(jfst->fst) );
 }
 
-static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client ) {
+static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client,
+    bool raw) {
     char name[FST_MAX_PARAM_NAME];
     FST* fst = jfst->fst;
     parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
 	fst_num_params(fst) : parm_no;
     fst_call_dispatcher( fst, effGetParamName, parm_no, 0, name, 0 );
-    jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name,
-		  fst->plugin->getParameter(fst->plugin, parm_no));
+    float parm = fst->plugin->getParameter(fst->plugin, parm_no);
+    if  (raw)
+	jfst_send_fmt(jfst, serv_client, "%d = 0x%X",
+		      parm_no, htonl(*(uint32_t *)&parm));
+    else
+	jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name, parm);
 }
 
-static void set_param ( JFST * jfst, int parm_no, float value) {
+static void set_param ( JFST * jfst, int parm_no, char *value) {
     FST* fst = jfst->fst;
     parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
 	fst_num_params(fst) : parm_no;
-    fst->plugin->setParameter(fst->plugin, parm_no, value);
+    float parm_val;
+    if (value[0] == '0' && value[1] == 'x') {
+	uint32_t parm_int = ntohl(strtoul(value, NULL, 0));
+	parm_val = *(float *)&parm_int;
+    } else
+	parm_val = strtof(value, NULL);
+    fst->plugin->setParameter(fst->plugin, parm_no, parm_val);
 }
 
 static void get_channel ( JFST* jfst, ServClient* serv_client ) {
@@ -210,7 +224,7 @@ typedef struct {
 	PROTO_CMD proto_cmd;
 	JFST* jfst;
 	/* return */
-	bool ack;
+	unsigned int ack;
 	bool quit;
 	bool done;
 } CMD;
@@ -332,7 +346,9 @@ void jfst_proto_dispatch( ServClient* serv_client, CMD* cmd ) {
 		list_programs ( jfst, serv_client );
 		break;
 	case CMD_LIST_PARAMS:
-		list_params ( jfst, serv_client );
+	        list_params ( jfst, serv_client, *value );
+		if (*value)
+		    cmd->ack = 2;
 		break;
 	case CMD_LIST_MIDI_MAP:
 		list_midi_map( jfst, serv_client );
@@ -344,11 +360,15 @@ void jfst_proto_dispatch( ServClient* serv_client, CMD* cmd ) {
 		fst_set_program ( jfst->fst, strtol(value, NULL, 10) );
 		break;
 	case CMD_GET_PARAM:
-	        get_param ( jfst, strtol(value, NULL, 10), serv_client );
+	        get_param ( jfst, strtol(value, NULL, 10), serv_client,
+			    *cmd->value2 );
+		if (*cmd->value2)
+		    cmd->ack = 2;
 		break;
 	case CMD_SET_PARAM:
-	        set_param(jfst, strtol(value, NULL, 10),
-			  strtof(cmd->value2, NULL));
+	        set_param(jfst, strtol(value, NULL, 10), cmd->value2);
+		if (cmd->value2[0] == '0' && cmd->value2[1] == 'x')
+		    cmd->ack = 2;
 		break;
 	case CMD_GET_MIDI_MAP:
 	        get_midi_map ( jfst, strtol(value, NULL, 10), serv_client );
@@ -444,7 +464,8 @@ quit:
 	if ( cmd.done ) log_debug ( "GOT VALID MSG: %s", msg );
 
 	// Send ACK / NAK
-	serv_client_send_data ( serv_client, (cmd.ack) ? ACK : NAK );
+	if (cmd.ack != 2)
+	    serv_client_send_data ( serv_client, (cmd.ack) ? ACK : NAK );
 
 	return ( ! cmd.quit );
 }
