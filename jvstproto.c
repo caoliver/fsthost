@@ -8,6 +8,12 @@
 #define ACK "<OK>"
 #define NAK "<FAIL>"
 
+// Constant wire byte order or not?
+#if 1
+#define ntohl(X) X
+#define htonl(X) X
+#endif
+
 /* serv.c */
 int serv_get_sock ( const char * );
 int serv_get_client ( int socket_desc );
