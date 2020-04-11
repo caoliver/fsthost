@@ -5,7 +5,14 @@
 
 #include "jfst/node.h"
 #include "log/log.h"
+
+// Constant wire byte order?
+#if 0
 #include <arpa/inet.h> // Host order <--> net order
+#else
+#define ntohl(X) X
+#define htonl(X) X
+#endif
 
 #define ACK "<OK>"
 #define NAK "<FAIL>"
