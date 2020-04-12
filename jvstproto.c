@@ -116,10 +116,16 @@ static void set_midi_map(JackVST *jvst, int cc_num, int parm_no,
 	jvst->midi_map[cc_num] = parm_no;
 }
 
+static void set_param_helper( JackVST *jvst, int ix, float parmval)
+{
+    FST* fst = jvst->fst;
+    if (ix < 0 && ix >= fst->plugin->numParams)
+	return;
+    parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
+    fst->plugin->setParameter(fst->plugin, ix, parmval);
+}
+
 static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
-    	FST* fst = jvst->fst;
-	if (ix < 0 && ix >= fst->plugin->numParams)
-	    return;
 	float parmval;
 	if (value[0] == '0' && value[1] == 'x') {
 	    uint32_t uintval = ntohl(strtoul(value, NULL, 0));
@@ -127,8 +133,51 @@ static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
 	    parmval = *(float *)&uintval;
 	} else
 	    parmval = strtof(value, NULL);
-	parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
-	fst->plugin->setParameter(fst->plugin, ix, parmval);
+	set_param_helper(jvst, ix, parmval);
+}
+
+static char encode_table[] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"abcdefghijklmnopqrstuvwxyz"
+"0123456789"
+"+/";
+
+static uint32_t decode_table[128];
+
+static __attribute__((constructor)) void build_b64_decode_table()
+{
+    int i = 0;
+
+    for (i = 63; i >= 0; i--)
+        decode_table[encode_table[i]] = i;
+}
+
+static void set_param_b64(JackVST *jvst, const char *b64str)
+{
+    struct parts {
+	float value;
+	uint16_t param;
+    } parmspec;
+
+    if (strlen(b64str) != 8)
+	return;
+
+    uint8_t *pun = (uint8_t *)&parmspec, *src = b64str;
+    uint32_t q = decode_table[src[3]] |
+        (decode_table[src[2]] |
+         (decode_table[src[1]] |
+          decode_table[src[0]] << 6) << 6) << 6;
+    pun[0] = q >> 16 & 0xff;
+    pun[1] = q >> 8 & 0xff;
+    pun[2] = q & 0xff;
+    q = decode_table[src[7]] |
+        (decode_table[src[6]] |
+         (decode_table[src[5]] |
+          decode_table[src[4]] << 6) << 6) << 6;
+    pun[3] = q >> 16 & 0xff;
+    pun[4] = q >> 8 & 0xff;
+    pun[5] = q & 0xff;
+    set_param_helper(jvst, parmspec.param, parmspec.value);
 }
 
 static void get_param( JackVST *jvst, int ix, int client_sock, bool raw ) {
@@ -326,10 +375,16 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	    }
 	}
 
+
 	char outbuf[64];
 	unsigned int num_arg;
 
 	if (cmdtok) {
+	    if (*cmdtok == ':') {
+		set_param_b64(jvst, cmdtok+1);
+		return;
+	    }
+
 	    switch ( proto_lookup ( cmdtok ) ) {
 	    case CMD_QUIT:
 		close ( client_sock );
