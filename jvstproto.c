@@ -129,11 +129,12 @@ static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
 	set_param_helper(jvst, ix, parmval);
 }
 
+// b64 encoding avoiding special OSC chars.
 static char encode_table[] =
 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 "abcdefghijklmnopqrstuvwxyz"
 "0123456789"
-"+/";
+"+-";
 
 static uint32_t decode_table[128];
 
