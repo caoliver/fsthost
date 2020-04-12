@@ -123,20 +123,69 @@ static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client,
 	jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name, parm);
 }
 
-static void set_param ( JFST * jfst, int parm_no, char *value) {
+static void set_param_helper( JFST *jfst, int ix, float parmval)
+{
     FST* fst = jfst->fst;
-    parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
-	fst_num_params(fst) : parm_no;
-    float parm_val;
-    if (value[0] == '0' && value[1] == 'x') {
-	uint32_t parm_int = ntohl(strtoul(value, NULL, 0));
-	parm_val = *(float *)&parm_int;
-    } else
-	parm_val = strtof(value, NULL);
-    parm_val = parm_val < 0 ? 0 : parm_val > 1 ? 1 : parm_val;
-    fst->plugin->setParameter(fst->plugin, parm_no, parm_val);
+    ix = ix < 0 ? 0 : ix > fst_num_params(fst) ? fst_num_params(fst) : ix;
+    parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
+    fst->plugin->setParameter(fst->plugin, ix, parmval);
 }
 
+static void set_param ( JFST * jfst, int parm_no, char *value) {
+    FST* fst = jfst->fst;
+    float parmval;
+    if (value[0] == '0' && value[1] == 'x') {
+	uint32_t parm_int = ntohl(strtoul(value, NULL, 0));
+	parmval = *(float *)&parm_int;
+    } else
+	parmval = strtof(value, NULL);
+    set_param_helper (jfst, parm_no, parmval);
+}
+
+// b64 encoding avoiding special OSC chars.
+static char encode_table[] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"abcdefghijklmnopqrstuvwxyz"
+"0123456789"
+"+-";
+
+static uint32_t decode_table[128];
+
+static __attribute__((constructor)) void build_b64_decode_table()
+{
+    int i = 0;
+
+    for (i = 63; i >= 0; i--)
+        decode_table[encode_table[i]] = i;
+}
+
+static void set_param_b64(JFST *jfst, const char *b64str)
+{
+    struct parts {
+	float value;
+	uint16_t param;
+    } parmspec;
+
+    if (strlen(b64str) != 8)
+	return;
+
+    uint8_t *pun = (uint8_t *)&parmspec, *src = b64str;
+    uint32_t q = decode_table[src[3]] |
+        (decode_table[src[2]] |
+         (decode_table[src[1]] |
+          decode_table[src[0]] << 6) << 6) << 6;
+    pun[0] = q >> 16 & 0xff;
+    pun[1] = q >> 8 & 0xff;
+    pun[2] = q & 0xff;
+    q = decode_table[src[7]] |
+        (decode_table[src[6]] |
+         (decode_table[src[5]] |
+          decode_table[src[4]] << 6) << 6) << 6;
+    pun[3] = q >> 16 & 0xff;
+    pun[4] = q >> 8 & 0xff;
+    pun[5] = q & 0xff;
+    set_param_helper(jfst, parmspec.param, parmspec.value);
+}
 static void get_channel ( JFST* jfst, ServClient* serv_client ) {
 	jfst_send_fmt( jfst, serv_client, "CHANNEL:%d", midi_filter_one_channel_get(&jfst->channel) );
 }
@@ -317,7 +366,8 @@ void msg2cmd( char* msg, CMD* cmd ) {
 	    }
 	}
 
-	cmd->proto_cmd = proto_lookup( cmd->cmd );
+	if (*cmd->cmd != ':')
+	    cmd->proto_cmd = proto_lookup( cmd->cmd );
 	cmd->ack = false;
 	cmd->quit = false;
 	cmd->done = false;
@@ -338,6 +388,12 @@ void jfst_proto_dispatch( ServClient* serv_client, CMD* cmd ) {
 	JFST* jfst = cmd->jfst;
 	const char* value = cmd->value;
 	cmd->done = cmd->ack = true;
+
+	if (*cmd->cmd == ':') {
+	    set_param_b64(jfst, cmd->cmd+1);
+	    cmd->ack = 2;
+	    return;
+	}
 
 	switch ( cmd->proto_cmd ) {
 	case CMD_EDITOR:
