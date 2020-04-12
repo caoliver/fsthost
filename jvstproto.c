@@ -8,12 +8,6 @@
 #define ACK "<OK>"
 #define NAK "<FAIL>"
 
-// Constant wire byte order or not?
-#if 1
-#define ntohl(X) X
-#define htonl(X) X
-#endif
-
 /* serv.c */
 int serv_get_sock ( const char * );
 int serv_get_client ( int socket_desc );
@@ -62,7 +56,7 @@ static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 		float parm = fst->plugin->getParameter(fst->plugin, i);
 		if (raw)
 		    snprintf(msg, sizeof(msg), "%d:%s = 0x%X",
-			     i, paramName, htonl(*(uint32_t *)&parm));
+			     i, paramName, *(uint32_t *)&parm);
 		else
 		    snprintf(msg, sizeof(msg), "%d:%s = %f",
 			     i, paramName, parm);
@@ -127,7 +121,7 @@ static void set_param_helper( JackVST *jvst, int ix, float parmval)
 static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
 	float parmval;
 	if (value[0] == '0' && value[1] == 'x') {
-	    uint32_t uintval = ntohl(strtoul(value, NULL, 0));
+	    uint32_t uintval = strtoul(value, NULL, 0);
 	    send_ack = false;
 	    parmval = *(float *)&uintval;
 	} else
@@ -192,7 +186,7 @@ static void get_param( JackVST *jvst, int ix, int client_sock, bool raw ) {
 	float parm = fst->plugin->getParameter(fst->plugin, ix);
 	if (raw)
 	    snprintf(msg, sizeof(msg), "%d = 0x%X",
-			     ix, htonl(*(uint32_t *)&parm));
+			     ix, *(uint32_t *)&parm);
 	else
 	    snprintf(msg, sizeof(msg), "%d:%s = %f", ix, name, parm);
 	serv_send_client_data ( client_sock, msg, strlen(msg) );
