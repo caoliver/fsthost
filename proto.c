@@ -6,14 +6,6 @@
 #include "jfst/node.h"
 #include "log/log.h"
 
-// Constant wire byte order?
-#if 0
-#include <arpa/inet.h> // Host order <--> net order
-#else
-#define ntohl(X) X
-#define htonl(X) X
-#endif
-
 #define ACK "<OK>"
 #define NAK "<FAIL>"
 
@@ -53,7 +45,7 @@ static void list_params ( JFST* jfst, ServClient* serv_client, bool raw ) {
 		float parm = fst->plugin->getParameter(fst->plugin, i);
 		if (raw) {
 		    jfst_send_fmt(jfst, serv_client, "%d:%s = 0x%X",
-				  i, paramName, htonl(*(uint32_t *)&parm));
+				  i, paramName, *(uint32_t *)&parm);
 		} else
 		    jfst_send_fmt(jfst, serv_client, "%d:%s = %f",
 				  i, paramName, parm);
@@ -118,7 +110,7 @@ static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client,
     float parm = fst->plugin->getParameter(fst->plugin, parm_no);
     if  (raw)
 	jfst_send_fmt(jfst, serv_client, "%d = 0x%X",
-		      parm_no, htonl(*(uint32_t *)&parm));
+		      parm_no, *(uint32_t *)&parm);
     else
 	jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name, parm);
 }
@@ -135,7 +127,7 @@ static void set_param ( JFST * jfst, int parm_no, char *value) {
     FST* fst = jfst->fst;
     float parmval;
     if (value[0] == '0' && value[1] == 'x') {
-	uint32_t parm_int = ntohl(strtoul(value, NULL, 0));
+	uint32_t parm_int = strtoul(value, NULL, 0);
 	parmval = *(float *)&parm_int;
     } else
 	parmval = strtof(value, NULL);
