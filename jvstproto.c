@@ -119,8 +119,7 @@ static void set_midi_map(JackVST *jvst, int cc_num, int parm_no,
 static void set_param_helper( JackVST *jvst, int ix, float parmval)
 {
     FST* fst = jvst->fst;
-    if (ix < 0 && ix >= fst->plugin->numParams)
-	return;
+    ix = ix < 0 ? 0 : ix >= fst->plugin->numParams ? fst->plugin->numParams : ix;
     parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
     fst->plugin->setParameter(fst->plugin, ix, parmval);
 }
