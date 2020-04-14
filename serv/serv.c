@@ -15,6 +15,8 @@
 #define DEBUG log_debug
 #define ERROR log_error
 
+static bool cleanup_sock;
+
 static void strip_trailing ( char* string, char chr ) {
 	char* c = strrchr ( string, chr );
 	if ( c ) *c = '\0';
@@ -89,7 +91,7 @@ struct sockaddr_un server_un;
 Serv* serv_init ( const char *name, serv_client_callback cb ) {
     int fd ;
     
-    if (*name == '/') {
+    if (*name && strspn(name, "0123456789") != strlen(name)) {
 	fd = socket(AF_UNIX , SOCK_STREAM , 0);
 	if (fd == -1) {
 	    ERROR("Could not create socket");
@@ -108,6 +110,7 @@ Serv* serv_init ( const char *name, serv_client_callback cb ) {
 	    close(fd);
 	    return NULL;
 	}
+	cleanup_sock = true;
 	INFO("Serv start on port: %s", server_un.sun_path);
     } else {
 	fd = socket(AF_INET , SOCK_STREAM , 0);
@@ -211,7 +214,7 @@ void serv_close (Serv* serv) {
 
 	// Close server
 	close ( serv->fd );
-	if (server_un.sun_path[0] == '/')
+	if (cleanup_sock)
 	    unlink(server_un.sun_path);
 	free(serv);
 }
