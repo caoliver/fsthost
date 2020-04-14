@@ -21,6 +21,23 @@ void jvst_quit(JackVST* jvst);
 static int serv_fd = 0;
 bool send_ack;
 
+// b64 encoding avoiding special OSC chars.
+static char encode_table[] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"abcdefghijklmnopqrstuvwxyz"
+"0123456789"
+"+-";
+
+static uint32_t decode_table[128];
+
+static __attribute__((constructor)) void build_b64_decode_table()
+{
+    int i = 0;
+
+    for (i = 63; i >= 0; i--)
+        decode_table[encode_table[i]] = i;
+}
+
 static void list_programs ( JackVST* jvst, int client_sock ) {
 	FST* fst = jvst->fst;
 	int32_t i;
@@ -43,6 +60,30 @@ static void list_programs ( JackVST* jvst, int client_sock ) {
 
 #define FST_MAX_PARAM_NAME 32
 
+struct __attribute__ ((packed)) b64template {
+    float current;
+    uint16_t index;
+    float minimum;
+    float maximum;
+    uint8_t pad;
+};
+
+#define TEMPLATE_END ((sizeof(struct b64template)+2)/3 * 4)
+
+static void encode_template(struct b64template *tpl, char *dst)
+{
+    uint8_t *src = (uint8_t *)tpl;
+    
+    for (int i=0; i < sizeof(*tpl); i+=3) {
+	uint32_t q = src[2] | (src[1] | (src[0] << 8)) << 8;
+	*dst++ = encode_table[q >> 18 & 63];
+	*dst++ = encode_table[q >> 12 & 63];
+	*dst++ = encode_table[q >> 6 & 63];
+	*dst++ = encode_table[q & 63];
+	src += 3;
+    }
+}
+
 static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 	char paramName[FST_MAX_PARAM_NAME];
 	char msg[80];
@@ -50,8 +91,7 @@ static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 	send_ack = !raw;
 
 	FST* fst = jvst->fst;
-	int32_t i;
-	for ( i = 0; i < fst->plugin->numParams; i++ ) {
+	for ( int i = 0; i < fst->plugin->numParams; i++ ) {
 		fst_call_dispatcher(fst, effGetParamName, i, 0, paramName, 0);
 		float parm = fst->plugin->getParameter(fst->plugin, i);
 		if (raw)
@@ -64,7 +104,27 @@ static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
         }
 }
 
+static void list_params_b64(JackVST* jvst, int client_sock, bool brief ) {
+    char paramName[FST_MAX_PARAM_NAME];
+    char msg[80];
+    char out[TEMPLATE_END + 1];
+    out[TEMPLATE_END] = 0;
 
+    FST* fst = jvst->fst;
+    for ( int ix = 0; ix < fst->plugin->numParams; ix++ ) {
+	fst_call_dispatcher(fst, effGetParamName, ix, 0, paramName, 0);
+	float parm = fst->plugin->getParameter(fst->plugin, ix);
+	struct b64template tmpl = { parm, ix, 0, 1, 0 };
+	encode_template(&tmpl, out);
+	if (brief)
+	    snprintf(msg, sizeof(msg), "%.8s %s", out, paramName);
+	else
+	    snprintf(msg, sizeof(msg), "%.8s %s %s", out, &out[8], paramName);
+
+	serv_send_client_data ( client_sock, msg, strlen(msg) );
+    }
+    serv_send_client_data ( client_sock, "#FINI", 5 );
+}
 
 static void list_midi_map ( JackVST *jvst, int client_sock ) {
 	char name[FST_MAX_PARAM_NAME];
@@ -127,23 +187,6 @@ static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
 	} else
 	    parmval = strtof(value, NULL);
 	set_param_helper(jvst, ix, parmval);
-}
-
-// b64 encoding avoiding special OSC chars.
-static char encode_table[] =
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-"abcdefghijklmnopqrstuvwxyz"
-"0123456789"
-"+-";
-
-static uint32_t decode_table[128];
-
-static __attribute__((constructor)) void build_b64_decode_table()
-{
-    int i = 0;
-
-    for (i = 63; i >= 0; i--)
-        decode_table[encode_table[i]] = i;
 }
 
 static void set_param_b64(JackVST *jvst, const char *b64str)
@@ -376,6 +419,11 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	if (cmdtok) {
 	    if (*cmdtok == ':') {
 		set_param_b64(jvst, cmdtok+1);
+		return;
+	    }
+
+	    if (*cmdtok == '#') {
+		list_params_b64(jvst, client_sock, cmdtok[1] == 0);
 		return;
 	    }
 
