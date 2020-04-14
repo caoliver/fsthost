@@ -8,11 +8,12 @@
 #include <sys/un.h>
 #include <stdlib.h>
 
-struct sockaddr_un server_un;
+static struct sockaddr_un server_un;
+static bool cleanup_sock;
 
 int serv_get_sock ( const char *sockname ) {
     int socket_desc;
-    if ( *sockname == '/' ) {
+    if ( *sockname && strspn(sockname, "0123456789") != strlen(sockname) ) {
 	socket_desc = socket(AF_UNIX , SOCK_STREAM , 0);
 	if (socket_desc < 0) goto err0;
 	socklen_t addrlen = strlen(sockname);
@@ -25,6 +26,7 @@ int serv_get_sock ( const char *sockname ) {
 	if (bind(socket_desc, (struct sockaddr *)&server_un,
 		 sizeof(server_un)) != 0)
 	    goto err1;
+	cleanup_sock = true;
 	printf ("bind done: port %s\n", server_un.sun_path);
     } else {
 	socket_desc = socket(AF_INET , SOCK_STREAM , 0);
@@ -106,6 +108,6 @@ bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len ) {
 
 void serv_close_socket ( int socket_desc ) {
 	close ( socket_desc );
-	if (server_un.sun_path[0] == '/')
+	if (cleanup_sock)
 	    unlink(server_un.sun_path);
 }
