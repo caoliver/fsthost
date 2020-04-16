@@ -74,13 +74,12 @@ static void encode_template(struct b64template *tpl, char *dst)
 {
     uint8_t *src = (uint8_t *)tpl;
     
-    for (int i=0; i < sizeof(*tpl); i+=3) {
+    for (int i=0; i < sizeof(*tpl); i+=3, src += 3) {
 	uint32_t q = src[2] | (src[1] | (src[0] << 8)) << 8;
-	*dst++ = encode_table[q >> 18 & 63];
+	*dst++ = encode_table[q >> 18];
 	*dst++ = encode_table[q >> 12 & 63];
 	*dst++ = encode_table[q >> 6 & 63];
 	*dst++ = encode_table[q & 63];
-	src += 3;
     }
 }
 
@@ -204,14 +203,14 @@ static void set_param_b64(JackVST *jvst, const char *b64str)
         (decode_table[src[2]] |
          (decode_table[src[1]] |
           decode_table[src[0]] << 6) << 6) << 6;
-    pun[0] = q >> 16 & 0xff;
+    pun[0] = q >> 16;
     pun[1] = q >> 8 & 0xff;
     pun[2] = q & 0xff;
     q = decode_table[src[7]] |
         (decode_table[src[6]] |
          (decode_table[src[5]] |
           decode_table[src[4]] << 6) << 6) << 6;
-    pun[3] = q >> 16 & 0xff;
+    pun[3] = q >> 16;
     pun[4] = q >> 8 & 0xff;
     pun[5] = q & 0xff;
     set_param_helper(jvst, parmspec.param, parmspec.value);
