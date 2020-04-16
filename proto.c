@@ -84,6 +84,10 @@ static void list_params_b64(JFST* jfst, ServClient* serv_client, bool brief ) {
 	for ( int ix = 0; ix < fst_num_params(fst); ix++ ) {
 	    fst_call_dispatcher ( fst, effGetParamName, ix, 0, paramName, 0 );
 	    float parm = fst->plugin->getParameter(fst->plugin, ix);
+	    for (int i = strlen(paramName); --i >= 0;)
+		if (isspace(paramName[i]))
+		    paramName[i] = '_';
+
 	    struct b64template tmpl = { parm, ix, 0, 1, 0 };
 	    
 	    encode_template(&tmpl, out);
