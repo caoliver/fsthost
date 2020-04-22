@@ -4,13 +4,14 @@
 #include <glib.h>
 #include <ctype.h>
 #include "jackvst.h"
+#include "linefile.h"
 
 #define ACK "<OK>"
 #define NAK "<FAIL>"
 
 /* serv.c */
 int serv_get_sock ( const char * );
-int serv_get_client ( int socket_desc );
+struct linefile *serv_get_client ( int socket_desc, JackVST * );
 bool serv_send_client_data ( int client_sock, char* msg, int msg_len );
 bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len );
 void serv_close_socket ( int socket_desc );
@@ -388,13 +389,11 @@ static char *nexttoken(char **str)
     return tokstart != out ? tokstart : NULL;
 }
 
-static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
+static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
         char *result = ACK;
-        char msg[64];
-        if ( ! serv_client_get_data ( client_sock, msg, sizeof msg ) )
-		return false;
-	bool do_update = false;
 	send_ack = true;
+	JackVST *jvst = file->jvst;
+	int client_sock = file->fd;
 
 //	printf ( "GOT MSG: %s\n", msg );
 
@@ -414,19 +413,18 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	    }
 	}
 
-
 	char outbuf[64];
 	unsigned int num_arg;
 
 	if (cmdtok) {
 	    if (*cmdtok == ':') {
 		set_param_b64(jvst, cmdtok+1);
-		return;
+		return true;
 	    }
 
 	    if (*cmdtok == '#') {
 		list_params_b64(jvst, client_sock, cmdtok[1] == 0);
-		return;
+		return true;
 	    }
 
 	    switch ( proto_lookup ( cmdtok ) ) {
@@ -444,9 +442,7 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		    result = NAK;
 		break;
 	    case CMD_LOAD:
-		if (jvst_load_state(jvst, param))
-		    do_update = true;
-		else
+		if (!jvst_load_state(jvst, param))
 		    result = NAK;
 		break;
 	    case CMD_EDITOR:
@@ -460,7 +456,6 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		}
 		break;
 	    case CMD_MIDI_LEARN:
-		do_update = true;
 		if ( param && !strcasecmp(param, "start") ) {
 		    jvst->midi_learn_CC = jvst->midi_learn_PARAM = -1;
 		    jvst->midi_learn = TRUE;
@@ -469,7 +464,6 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		} else {
 			puts ( "Need param: start|stop" );
 			result = NAK;
-			do_update = false;
 		}
 		break;
 	    case CMD_GET_PARAM:
@@ -502,7 +496,6 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		if (param) {
 		    midi_filter_one_channel_set(&jvst->channel,
 						strtol(param, NULL, 10));
-		    do_update = true;
 		}
 		break;
 	    case CMD_GET_VOLUME:
@@ -511,10 +504,8 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
 		break;
 	    case CMD_SET_VOLUME:
-		if (param) {
+		if (param)
 		    jvst_set_volume(jvst, strtol(param, NULL, 10));
-		    do_update = true;
-		}
 		break;
 	    case CMD_GET_TRANSPOSE:
 		snprintf(outbuf, sizeof(outbuf)-1, "TRANSPOSE:%d\n",
@@ -529,7 +520,6 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 		    midi_filter_transposition_set(jvst->transposition,
 						  trnspos);
 		    refresh_transposition_spin(jvst);
-		    do_update = true;
 		}
 		break;
 	    case CMD_LIST_PROGRAMS:
@@ -541,16 +531,13 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 	    case CMD_SET_PROGRAM: {
 		int pgm = param ? strtol(param, NULL, 10) : 0;
 		fst_program_change ( jvst->fst, pgm >= 0 ? pgm : 0 ) ;
-		do_update = true;
 	    }
 		break;
 	    case CMD_SUSPEND:
 		jvst_bypass ( jvst, true );
-		do_update = true;
 		break;
 	    case CMD_RESUME:
 		jvst_bypass ( jvst, false );
-		do_update = true;
 		break;
 	    case CMD_KILL:
 		jvst_quit ( jvst );
@@ -573,28 +560,34 @@ static bool jvst_proto_client_dispatch ( JackVST* jvst, int client_sock ) {
 }
 
 static bool handle_client_connection (GIOChannel *source, GIOCondition condition, gpointer data ) {
-	JackVST* jvst = (JackVST*) data;
-
-	int client_fd = g_io_channel_unix_get_fd ( source );
-	bool ok = jvst_proto_client_dispatch ( jvst, client_fd );
-
-	return ok;
+    bool do_quit;
+    struct linefile *file = (struct linefile *)data;
+    while (1) {
+	char *msg = serv_client_nextline(file);
+	if (msg) {
+	    if (do_quit = !jvst_proto_client_dispatch( msg, file )) break;
+	} else if (do_quit = file->state == linefile_q_exit) break;
+	else if (file->state == linefile_q_init) break;
+    }
+    if (do_quit)
+	free(data);
+    return !do_quit;
 }
 
 static bool handle_server_connection (GIOChannel *source, GIOCondition condition, gpointer data ) {
 	JackVST* jvst = (JackVST*) data;
 
 	int serv_fd = g_io_channel_unix_get_fd ( source );
-	int client_fd = serv_get_client ( serv_fd );
+	struct linefile *file = serv_get_client ( serv_fd, jvst );
 
 	/* Watch client socket */
-	GIOChannel* channel = g_io_channel_unix_new ( client_fd );
+	GIOChannel* channel = g_io_channel_unix_new ( file->fd );
 	g_io_add_watch_full(
 		channel,
 		G_PRIORITY_DEFAULT_IDLE,
 		G_IO_IN,
 		(GIOFunc) handle_client_connection,
-		jvst, NULL
+		file, NULL
 	);
 
 	return true;

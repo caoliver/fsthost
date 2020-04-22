@@ -1,12 +1,13 @@
 #include <stdbool.h>
+#include <sys/select.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdio.h>
 #include <unistd.h>    //write
 #include <sys/socket.h>
 #include <arpa/inet.h> //inet_addr
 #include <sys/un.h>
 #include <stdlib.h>
+#include "linefile.h"
 
 static struct sockaddr_un server_un;
 static bool cleanup_sock;
@@ -58,7 +59,17 @@ err1:
     return 0;
 }
 
-int serv_get_client ( int socket_desc ) {
+
+static struct linefile *make_linefile(int fd, void *jvst)
+{
+    struct linefile *file = malloc(sizeof(*file));
+    memset(file, 0, sizeof(*file));
+    file->fd = fd;
+    file->jvst = jvst;
+    return file;
+}
+
+struct linefile *serv_get_client ( int socket_desc, void *jvst ) {
 	//Accept and incoming connection
 	puts("Waiting for incoming connections...");
      
@@ -70,12 +81,7 @@ int serv_get_client ( int socket_desc ) {
 	}
 	puts("Connection accepted");
 
-	return client_sock;
-}
-
-static void strip_trailing ( char* string, char chr ) {
-	char* c = strrchr ( string, chr );
-	if ( c ) *c = '\0';
+	return make_linefile(client_sock, jvst);
 }
 
 bool serv_send_client_data ( int client_sock, char* msg, int msg_len ) {
@@ -86,24 +92,53 @@ bool serv_send_client_data ( int client_sock, char* msg, int msg_len ) {
 	return ( write_size == len ) ? true : false;
 }
 
-bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len ) {
-	//Receive a message from client
-	int read_size = recv (client_sock , msg , msg_max_len, 0);
-	if (read_size == 0) {
-		puts("Client disconnected");
-		close ( client_sock );
-		return false;
-	} else if (read_size < 0) {
-		perror("recv failed");
-		close ( client_sock );
-		return false;
+char *serv_client_nextline(struct linefile *file) {
+    fd_set read_set;
+    struct timeval timeout = {0, 0};
+    char *start;
+    int actual;
+    switch (file->state) {
+    case linefile_q_init:
+    case linefile_q_readagain:
+	FD_ZERO(&read_set);
+	FD_SET(file->fd, &read_set);
+	if (select(file->fd+1, &read_set, NULL, NULL, &timeout) < 1) {
+	    file->state = linefile_q_init;
+	    return NULL;
 	}
-	msg[read_size] = '\0'; /* make sure there is end */
-
-	strip_trailing ( msg, '\n' );
-	strip_trailing ( msg, '\r' );
-
-	return true;
+	actual = read(file->fd, (char *)file->buf+file->nextix,
+			  LINEFILE_BUFSIZE - file->nextix);
+	if (actual <= 0) {
+	    close(file->fd);
+	    file->state = linefile_q_exit;
+	    return NULL;
+	}
+	file->nextix += actual;
+	file->end = (char *)file->buf - 1;
+	file->newline_seen = false;
+	file->state = linefile_q_scanagain;
+    case linefile_q_scanagain:
+	start = file->end + 1;
+	if (file->end = strchr(start, '\n')) {
+	    file->newline_seen = true;
+	    if (file->skipping) {
+		file->skipping = false;
+		return NULL;
+	    }
+	    *file->end = 0;
+	    return start;
+	}
+	file->end = (char *)file->buf - 1;
+	if (file->newline_seen) {
+	    file->nextix -= start - (char *)file->buf;
+	    memmove(file->buf, start, file->nextix);
+	} else if (file->nextix == LINEFILE_BUFSIZE) {
+	    file->nextix = 0;
+	    file->skipping = true;
+	}
+	file->state = linefile_q_readagain;
+	return NULL;
+    }
 }
 
 void serv_close_socket ( int socket_desc ) {
