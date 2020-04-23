@@ -10,12 +10,27 @@
 typedef struct _ServClient ServClient;
 typedef bool (*serv_client_callback) ( ServClient* client, char* msg );
 
+#define LINEFILE_BUFSIZE 1024
+
+enum linefile_state {
+    linefile_q_init,
+    linefile_q_exit,
+    linefile_q_scanagain,
+    linefile_q_readagain };
+
 struct _ServClient {
 	int fd; /* descriptior */
 	int number; /* TODO: userfull only for news (?!?) */
 	serv_client_callback callback;
 	void* data;
 	bool closed;
+
+        char buf[LINEFILE_BUFSIZE+1];
+	bool skipping;
+	bool newline_seen;
+	enum linefile_state state;
+	int nextix;
+	char *end;
 };
 
 typedef struct _Serv {

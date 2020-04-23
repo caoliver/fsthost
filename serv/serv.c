@@ -17,11 +17,6 @@
 
 static bool cleanup_sock;
 
-static void strip_trailing ( char* string, char chr ) {
-	char* c = strrchr ( string, chr );
-	if ( c ) *c = '\0';
-}
-
 static void serv_client_close ( ServClient* client ) {
 	if ( client->fd != -1 ) {
 		close ( client->fd );
@@ -30,28 +25,69 @@ static void serv_client_close ( ServClient* client ) {
 	client->closed = true;
 }
 
-static void serv_client_get_data ( ServClient* client ) {
-	char msg[64];
-
-	//Receive a message from client
-	ssize_t read_size = read (client->fd, msg, sizeof msg );
-	if (read_size == 0) {
+static char *serv_client_nextline(ServClient *client) {
+    fd_set read_set;
+    struct timeval timeout = {0, 0};
+    char *start;
+    int actual;
+    switch (client->state) {
+    case linefile_q_init:
+    case linefile_q_readagain:
+        FD_ZERO(&read_set);
+        FD_SET(client->fd, &read_set);
+        if (select(client->fd+1, &read_set, NULL, NULL, &timeout) < 1) {
+            client->state = linefile_q_init;
+            return NULL;
+        }
+        actual = read(client->fd, (char *)client->buf+client->nextix,
+		      LINEFILE_BUFSIZE - client->nextix);
+        if (actual <= 0) {
+	    if (actual == 0)
 		INFO("Client disconnected");
-		serv_client_close( client );
-		return;
-	} else if (read_size < 0) {
+	    else
 		ERROR("recv failed FD:%d", client->fd);
-		serv_client_close( client );
-		return;
-	} else {
-		// Message normalize
-		msg[read_size] = '\0'; /* make sure there is end */
-		strip_trailing ( msg, '\n' );
-		strip_trailing ( msg, '\r' );
-	}
+            client->state = linefile_q_exit;
+            return NULL;
+        }
+        client->nextix += actual;
+        client->end = (char *)client->buf - 1;
+        client->newline_seen = false;
+        client->state = linefile_q_scanagain;
+    case linefile_q_scanagain:
+        start = client->end + 1;
+        if (client->end = strchr(start, '\n')) {
+            client->newline_seen = true;
+            if (client->skipping) {
+                client->skipping = false;
+                return NULL;
+            }
+            *client->end = 0;
+            return start;
+        }
+        client->end = (char *)client->buf - 1;
+        if (client->newline_seen) {
+            client->nextix -= start - (char *)client->buf;
+            memmove(client->buf, start, client->nextix);
+        } else if (client->nextix == LINEFILE_BUFSIZE) {
+            client->nextix = 0;
+            client->skipping = true;
+        }
+        client->state = linefile_q_readagain;
+        return NULL;
+    }
+}
 
-	if ( ! client->callback(client, msg) )
-		serv_client_close( client );
+static void serv_client_get_data ( ServClient* client ) {
+    bool do_quit;
+    while(1) {
+	char *msg = serv_client_nextline(client);
+	if (msg) {
+	    if (do_quit = !client->callback(client, msg)) break;
+	} else if (do_quit = client->state == linefile_q_exit) break;
+	else if (client->state == linefile_q_init) break;
+    }
+    if (do_quit)
+	serv_client_close(client);
 }
 
 static int serv_get_client_fd ( Serv* serv ) {
@@ -81,6 +117,10 @@ static void serv_client_open ( Serv* serv ) {
 			client->fd = fd;
 			client->closed = false;
 			client->data = NULL;
+			client->skipping = false;
+			client->newline_seen = false;
+			client->state = linefile_q_init;
+			client->nextix = 0;
 			return;
 		}
 	}
