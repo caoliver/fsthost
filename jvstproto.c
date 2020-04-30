@@ -27,7 +27,7 @@ static char encode_table[] =
 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 "abcdefghijklmnopqrstuvwxyz"
 "0123456789"
-"+-";
+"+/";
 
 static uint32_t decode_table[128];
 
