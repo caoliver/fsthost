@@ -6,7 +6,6 @@
 #include "jackvst.h"
 #include "linefile.h"
 
-#define ACK "<OK>"
 #define NAK "<FAIL>"
 
 /* serv.c */
@@ -20,7 +19,6 @@ void serv_close_socket ( int socket_desc );
 void jvst_quit(JackVST* jvst);
 
 static int serv_fd = 0;
-bool send_ack;
 
 // b64 encoding avoiding special OSC chars.
 static char encode_table[] =
@@ -57,6 +55,7 @@ static void list_programs ( JackVST* jvst, int client_sock ) {
 		}
 		serv_send_client_data ( client_sock, progName, strlen(progName) );
         }
+	serv_send_client_data ( client_sock, "##", 2 );
 }
 
 #define FST_MAX_PARAM_NAME 32
@@ -88,8 +87,6 @@ static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 	char paramName[FST_MAX_PARAM_NAME];
 	char msg[80];
 
-	send_ack = !raw;
-
 	FST* fst = jvst->fst;
 	for ( int i = 0; i < fst->plugin->numParams; i++ ) {
 		fst_call_dispatcher(fst, effGetParamName, i, 0, paramName, 0);
@@ -102,6 +99,7 @@ static void list_params ( JackVST *jvst, int client_sock, bool raw ) {
 			     i, paramName, parm);
 		serv_send_client_data ( client_sock, msg, strlen(msg) );
         }
+	serv_send_client_data ( client_sock, "##", 2);
 }
 
 static void list_params_b64(JackVST* jvst, int client_sock, bool brief ) {
@@ -126,7 +124,7 @@ static void list_params_b64(JackVST* jvst, int client_sock, bool brief ) {
 
 	serv_send_client_data ( client_sock, msg, strlen(msg) );
     }
-    serv_send_client_data ( client_sock, "#FINI", 5 );
+    serv_send_client_data ( client_sock, "##", 2 );
 }
 
 static void list_midi_map ( JackVST *jvst, int client_sock ) {
@@ -145,6 +143,7 @@ static void list_midi_map ( JackVST *jvst, int client_sock ) {
 			 fst->plugin->getParameter(fst->plugin, paramIndex));
 		serv_send_client_data ( client_sock, msg, strlen(msg) );
 	}
+	serv_send_client_data ( client_sock, "##", 2 );
 }
 
 static void get_midi_map(JackVST *jvst, int cc_num, int client_sock)
@@ -176,7 +175,7 @@ static void set_midi_map(JackVST *jvst, int cc_num, int parm_no,
 static void set_param_helper( JackVST *jvst, int ix, float parmval)
 {
     FST* fst = jvst->fst;
-    ix = ix < 0 ? 0 : ix >= fst->plugin->numParams ? fst->plugin->numParams : ix;
+    ix = ix < 0 ? 0 : ix >= fst->plugin->numParams ? fst->plugin->numParams-1 : ix;
     parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
     fst->plugin->setParameter(fst->plugin, ix, parmval);
 }
@@ -185,7 +184,6 @@ static void set_param( JackVST *jvst, int ix, char *value, int client_sock ) {
 	float parmval;
 	if (value[0] == '0' && value[1] == 'x') {
 	    uint32_t uintval = strtoul(value, NULL, 0);
-	    send_ack = false;
 	    parmval = *(float *)&uintval;
 	} else
 	    parmval = strtof(value, NULL);
@@ -224,11 +222,11 @@ static void get_param( JackVST *jvst, int ix, int client_sock, bool raw ) {
     	char name[FST_MAX_PARAM_NAME];
 	char msg[80];
 
-	send_ack = !raw;
-
     	FST* fst = jvst->fst;
-	if (ix < 0 && ix >= fst->plugin->numParams)
+	if (ix < 0 || ix >= fst->plugin->numParams) {
+	    serv_send_client_data ( client_sock, NAK, strlen(NAK) );
 	    return;
+	}
 	fst_call_dispatcher( fst, effGetParamName, ix, 0, name, 0 );
 	float parm = fst->plugin->getParameter(fst->plugin, ix);
 	if (raw)
@@ -390,10 +388,9 @@ static char *nexttoken(char **str)
 }
 
 static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
-        char *result = ACK;
-	send_ack = true;
 	JackVST *jvst = file->jvst;
 	int client_sock = file->fd;
+	bool failed = false;
 
 //	printf ( "GOT MSG: %s\n", msg );
 
@@ -439,11 +436,11 @@ static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
 		break;
 	    case CMD_SAVE:
 		if (!jvst_save_state(jvst, param))
-		    result = NAK;
+		    failed = true;
 		break;
 	    case CMD_LOAD:
 		if (!jvst_load_state(jvst, param))
-		    result = NAK;
+		    failed = true;
 		break;
 	    case CMD_EDITOR:
 		if (param && !strcasecmp(param, "open"))
@@ -452,7 +449,7 @@ static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
 		    fst_call ( jvst->fst, EDITOR_CLOSE );
 		else {
 		    puts ( "Need param: open|close" );
-		    result = NAK;
+		    failed = true;
 		}
 		break;
 	    case CMD_MIDI_LEARN:
@@ -463,7 +460,7 @@ static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
 		    jvst->midi_learn = FALSE;
 		} else {
 			puts ( "Need param: start|stop" );
-			result = NAK;
+			failed = true;
 		}
 		break;
 	    case CMD_GET_PARAM:
@@ -548,13 +545,12 @@ static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
 	    case CMD_UNKNOWN:
 	    default:
 		printf ( "Unknown command: %s\n", cmdtok );
-		result = NAK;
+		failed = true;
 	    }
 	}
 
-	// Send ACK
-	if (send_ack)
-	    serv_send_client_data ( client_sock, result, strlen(result) );
+	if (failed)
+	    serv_send_client_data ( client_sock, NAK, strlen(NAK) );
 
 	return true;
 }
