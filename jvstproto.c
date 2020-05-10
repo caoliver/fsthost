@@ -426,7 +426,6 @@ static bool jvst_proto_client_dispatch ( char *msg, struct linefile *file ) {
 
 	    switch ( proto_lookup ( cmdtok ) ) {
 	    case CMD_QUIT:
-		close ( client_sock );
 		return false;
 	    case CMD_LIST_PARAMS:
 		list_params(jvst, client_sock, param[0]);
@@ -561,12 +560,17 @@ static bool handle_client_connection (GIOChannel *source, GIOCondition condition
     while (1) {
 	char *msg = serv_client_nextline(file);
 	if (msg) {
-	    if (do_quit = !jvst_proto_client_dispatch( msg, file )) break;
-	} else if (do_quit = file->state == linefile_q_exit) break;
-	else if (file->state == linefile_q_init) break;
+	    if (do_quit = !jvst_proto_client_dispatch( msg, file )) {
+		g_io_channel_shutdown(file->channel, false, NULL);
+		break;
+	    }
+	} else if (do_quit = file->state == linefile_q_exit) {
+	    g_io_channel_shutdown(file->channel, false, NULL);
+	    break;
+	} else if (file->state == linefile_q_init) break;
     }
     if (do_quit)
-	free(data);
+	free(file);
     return !do_quit;
 }
 
@@ -578,6 +582,7 @@ static bool handle_server_connection (GIOChannel *source, GIOCondition condition
 
 	/* Watch client socket */
 	GIOChannel* channel = g_io_channel_unix_new ( file->fd );
+	file->channel = channel;
 	g_io_add_watch_full(
 		channel,
 		G_PRIORITY_DEFAULT_IDLE,

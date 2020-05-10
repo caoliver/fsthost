@@ -109,7 +109,6 @@ char *serv_client_nextline(struct linefile *file) {
 	actual = read(file->fd, (char *)file->buf+file->nextix,
 			  LINEFILE_BUFSIZE - file->nextix);
 	if (actual <= 0) {
-	    close(file->fd);
 	    file->state = linefile_q_exit;
 	    return NULL;
 	}

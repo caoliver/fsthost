@@ -15,4 +15,5 @@ struct linefile {
     int nextix;
     char *end;
     void *jvst;
+    void *channel;
 };
