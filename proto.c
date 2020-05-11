@@ -1,18 +1,25 @@
 #include <stdio.h>
-#include <stdarg.h>
-#include <strings.h>
+#include <string.h>
+#include <stdio.h>
+#include <glib.h>
 #include <ctype.h>
-
+#include "linefile.h"
 #include "jfst/node.h"
 #include "log/log.h"
 
-#define ACK "<OK>"
 #define NAK "<FAIL>"
 
-static Serv* serv = NULL;
+/* serv.c */
+int serv_get_sock ( const char * );
+struct linefile *serv_get_client ( int socket_desc );
+bool serv_send_client_data ( int client_sock, char* msg, int msg_len );
+bool serv_client_get_data ( int client_sock, char* msg, int msg_max_len );
+void serv_close_socket ( int socket_desc );
 
-/* fsthost.c */
-extern void fsthost_quit();
+/* jfst.c */
+void fsthost_quit();
+
+static int serv_fd = 0;
 
 // b64 encoding avoiding special OSC chars.
 static char encode_table[] =
@@ -31,26 +38,19 @@ static __attribute__((constructor)) void build_b64_decode_table()
         decode_table[encode_table[i]] = i;
 }
 
-static void jfst_send_fmt ( JFST* jfst, ServClient* serv_client, const char* fmt, ... ) {
-	va_list ap;
-	char msg[512];
-
-	va_start (ap, fmt);
-	vsnprintf (msg, sizeof msg, fmt, ap);
-	serv_client_send_data ( serv_client, msg );
-	va_end (ap);
-}
-
-static void list_programs ( JFST* jfst, ServClient* serv_client ) {
-	char progName[FST_MAX_PROG_NAME];
-
+static void list_programs ( JFST *jfst, int client_sock ) {
+	char progName[64];
 	FST* fst = jfst->fst;
-	int32_t i;
-	for ( i = 0; i < fst_num_presets(fst); i++ ) {
-		fst_get_program_name(fst, i, progName, sizeof(progName));
-		jfst_send_fmt(jfst, serv_client, "%d:%s", i, progName);
+	
+	for ( int32_t i = 0; i < fst_num_presets(fst); i++ ) {
+	    sprintf(progName, "%4d: ", i);
+	    fst_get_program_name(fst, i, &progName[6], sizeof(progName));
+	    serv_send_client_data ( client_sock, progName, strlen(progName) );
         }
+	serv_send_client_data ( client_sock, "##", 2 );
 }
+
+#define FST_MAX_PARAM_NAME 32
 
 struct __attribute__ ((packed)) b64template {
     float current;
@@ -75,53 +75,53 @@ static void encode_template(struct b64template *tpl, char *dst)
     }
 }
 
-static void list_params_b64(JFST* jfst, ServClient* serv_client, bool brief ) {
+static void list_params ( JFST *jfst, int client_sock, bool raw ) {
 	char paramName[FST_MAX_PARAM_NAME];
-	char out[TEMPLATE_END + 1];
-	out[TEMPLATE_END] = 0;
+	char msg[80];
 
 	FST* fst = jfst->fst;
-	for ( int ix = 0; ix < fst_num_params(fst); ix++ ) {
-	    fst_call_dispatcher ( fst, effGetParamName, ix, 0, paramName, 0 );
-	    float parm = fst->plugin->getParameter(fst->plugin, ix);
-	    for (int i = strlen(paramName); --i >= 0;)
-		if (isspace(paramName[i]))
-		    paramName[i] = '_';
-
-	    struct b64template tmpl = { parm, ix, 0, 1, 0 };
-	    
-	    encode_template(&tmpl, out);
-
-	    if (brief)
-		jfst_send_fmt(jfst, serv_client, "%.8s %s",
-			      out, paramName);
-	    else
-		jfst_send_fmt(jfst, serv_client, "%.8s %s %s",
-			      out, &out[8], paramName);
-
-	}
-	jfst_send_fmt(jfst, serv_client, "#FINI");
-}
-
-static void list_params ( JFST* jfst, ServClient* serv_client, bool raw ) {
-	char paramName[FST_MAX_PARAM_NAME];
-
-	FST* fst = jfst->fst;
-	int32_t i;
-	for ( i = 0; i < fst_num_params(fst); i++ ) {
-		fst_call_dispatcher ( fst, effGetParamName, i, 0, paramName, 0 );
+	for ( int i = 0; i < fst->plugin->numParams; i++ ) {
+		fst_call_dispatcher(fst, effGetParamName, i, 0, paramName, 0);
 		float parm = fst->plugin->getParameter(fst->plugin, i);
-		if (raw) {
-		    jfst_send_fmt(jfst, serv_client, "%d:%s = 0x%X",
-				  i, paramName, *(uint32_t *)&parm);
-		} else
-		    jfst_send_fmt(jfst, serv_client, "%d:%s = %f",
-				  i, paramName, parm);
+		if (raw)
+		    snprintf(msg, sizeof(msg), "%d:%s = 0x%X",
+			     i, paramName, *(uint32_t *)&parm);
+		else
+		    snprintf(msg, sizeof(msg), "%d:%s = %f",
+			     i, paramName, parm);
+		serv_send_client_data ( client_sock, msg, strlen(msg) );
         }
+	serv_send_client_data ( client_sock, "##", 2);
 }
 
-static void list_midi_map ( JFST* jfst, ServClient* serv_client ) {
+static void list_params_b64( JFST *jfst, int client_sock, bool brief ) {
+    char paramName[FST_MAX_PARAM_NAME];
+    char msg[80];
+    char out[TEMPLATE_END + 1];
+    out[TEMPLATE_END] = 0;
+
+    FST* fst = jfst->fst;
+    for ( int ix = 0; ix < fst->plugin->numParams; ix++ ) {
+	fst_call_dispatcher(fst, effGetParamName, ix, 0, paramName, 0);
+	float parm = fst->plugin->getParameter(fst->plugin, ix);
+	for (int i = strlen(paramName); --i >= 0;)
+	    if (isspace(paramName[i]))
+		paramName[i] = '_';
+	struct b64template tmpl = { parm, ix, 0, 1, 0 };
+	encode_template(&tmpl, out);
+	if (brief)
+	    snprintf(msg, sizeof(msg), "%.8s %s", out, paramName);
+	else
+	    snprintf(msg, sizeof(msg), "%.8s %s %s", out, &out[8], paramName);
+
+	serv_send_client_data ( client_sock, msg, strlen(msg) );
+    }
+    serv_send_client_data ( client_sock, "##", 2 );
+}
+
+static void list_midi_map ( JFST *jfst, int client_sock ) {
 	char name[FST_MAX_PARAM_NAME];
+	char msg[80];
 
 	MidiLearn* ml = &jfst->midi_learn;
 	FST* fst = jfst->fst;
@@ -132,29 +132,33 @@ static void list_midi_map ( JFST* jfst, ServClient* serv_client ) {
 			continue;
 
 		fst_call_dispatcher( fst, effGetParamName, paramIndex, 0, name, 0 );
-		jfst_send_fmt(jfst, serv_client, "%d:%s = %f", cc, name,
-		    fst->plugin->getParameter(fst->plugin, paramIndex));
+		snprintf(msg, sizeof(msg), "%d:%s = %f", cc, name,
+			 fst->plugin->getParameter(fst->plugin, paramIndex));
+		serv_send_client_data ( client_sock, msg, strlen(msg) );
 	}
+	serv_send_client_data ( client_sock, "##", 2 );
 }
 
-static void get_midi_map(JFST *jfst, int cc_num, ServClient *serv_client)
+static void get_midi_map(JFST *jfst, int cc_num, int client_sock)
 {
     char name[FST_MAX_PARAM_NAME];
+    char msg[80];
 
     MidiLearn* ml = &jfst->midi_learn;
     FST* fst = jfst->fst;
     cc_num = cc_num < 0 ? 0 : cc_num > 127 ? 127 : cc_num;
     int32_t paramIndex = ml->map[cc_num];
-    if ( paramIndex < 0 || paramIndex >= fst_num_params(fst) ) {
-	jfst_send_fmt(jfst, serv_client, "%d -> UNASSIGNED", cc_num);
+    if ( paramIndex < 0 || paramIndex >= fst->plugin->numParams ) {
+	snprintf(msg, sizeof(msg), "%d -> UNASSIGNED", cc_num);
     } else {
 	fst_call_dispatcher( fst, effGetParamName, paramIndex, 0, name, 0 );
-	jfst_send_fmt(jfst, serv_client, "%d -> %d:%s", cc_num, paramIndex,
-		      name);
+	snprintf(msg, sizeof(msg), "%d -> %d:%s", cc_num, paramIndex, name);
     }
+    serv_send_client_data ( client_sock, msg, strlen(msg) );
 }
 
-static void set_midi_map(JFST *jfst, int cc_num, int parm_no)
+static void set_midi_map(JFST *jfst, int cc_num, int parm_no,
+			 int client_sock)
 {
     FST* fst = jfst->fst;
     MidiLearn* ml = &jfst->midi_learn;
@@ -163,43 +167,22 @@ static void set_midi_map(JFST *jfst, int cc_num, int parm_no)
 	ml->map[cc_num] = parm_no;
 }
 
-
-static void get_program ( JFST* jfst, ServClient* serv_client ) {
-	jfst_send_fmt( jfst, serv_client, "PROGRAM:%d", fst_get_program(jfst->fst) );
-}
-
-static void get_param ( JFST* jfst, int parm_no, ServClient* serv_client,
-    bool raw) {
-    char name[FST_MAX_PARAM_NAME];
-    FST* fst = jfst->fst;
-    parm_no = parm_no < 0 ? 0 : parm_no >= fst_num_params(fst) ?
-	fst_num_params(fst) : parm_no;
-    fst_call_dispatcher( fst, effGetParamName, parm_no, 0, name, 0 );
-    float parm = fst->plugin->getParameter(fst->plugin, parm_no);
-    if  (raw)
-	jfst_send_fmt(jfst, serv_client, "%d = 0x%X",
-		      parm_no, *(uint32_t *)&parm);
-    else
-	jfst_send_fmt(jfst, serv_client, "%d:%s = %f", parm_no, name, parm);
-}
-
 static void set_param_helper( JFST *jfst, int ix, float parmval)
 {
     FST* fst = jfst->fst;
-    ix = ix < 0 ? 0 : ix > fst_num_params(fst) ? fst_num_params(fst) : ix;
+    ix = ix < 0 ? 0 : ix >= fst->plugin->numParams ? fst->plugin->numParams-1 : ix;
     parmval = parmval < 0 ? 0 : parmval > 1 ? 1 : parmval;
     fst->plugin->setParameter(fst->plugin, ix, parmval);
 }
 
-static void set_param ( JFST * jfst, int parm_no, char *value) {
-    FST* fst = jfst->fst;
-    float parmval;
-    if (value[0] == '0' && value[1] == 'x') {
-	uint32_t parm_int = strtoul(value, NULL, 0);
-	parmval = *(float *)&parm_int;
-    } else
-	parmval = strtof(value, NULL);
-    set_param_helper (jfst, parm_no, parmval);
+static void set_param( JFST *jfst, int ix, char *value, int client_sock ) {
+	float parmval;
+	if (value[0] == '0' && value[1] == 'x') {
+	    uint32_t uintval = strtoul(value, NULL, 0);
+	    parmval = *(float *)&uintval;
+	} else
+	    parmval = strtof(value, NULL);
+	set_param_helper(jfst, ix, parmval);
 }
 
 static void set_param_b64(JFST *jfst, const char *b64str)
@@ -229,25 +212,32 @@ static void set_param_b64(JFST *jfst, const char *b64str)
     pun[5] = q & 0xff;
     set_param_helper(jfst, parmspec.param, parmspec.value);
 }
-static void get_channel ( JFST* jfst, ServClient* serv_client ) {
-	jfst_send_fmt( jfst, serv_client, "CHANNEL:%d", midi_filter_one_channel_get(&jfst->channel) );
+
+static void get_param( JFST *jfst, int ix, int client_sock, bool raw ) {
+    	char name[FST_MAX_PARAM_NAME];
+	char msg[80];
+    	FST* fst = jfst->fst;
+	if (ix < 0 || ix >= fst_num_params(fst)) {
+	    serv_send_client_data ( client_sock, NAK, strlen(NAK) );
+	    return;
+	}
+	fst_call_dispatcher( fst, effGetParamName, ix, 0, name, 0 );
+	float parm = fst->plugin->getParameter(fst->plugin, ix);
+	if (raw)
+	    snprintf(msg, sizeof(msg), "%d = 0x%X",
+			     ix, *(uint32_t *)&parm);
+	else
+	    snprintf(msg, sizeof(msg), "%d:%s = %f", ix, name, parm);
+	serv_send_client_data ( client_sock, msg, strlen(msg) );
 }
 
-static void get_volume ( JFST* jfst, ServClient* serv_client ) {
-	jfst_send_fmt( jfst, serv_client, "VOLUME:%d", jfst_get_volume(jfst) );
+static void get_program ( JFST* jfst, int client_sock ) {
+	char msg[16];
+	sprintf( msg, "PROGRAM:%d", fst_get_program(jfst->fst) );
+	serv_send_client_data ( client_sock, msg, strlen(msg) );
 }
 
-static void get_transpose ( JFST* jfst, ServClient* serv_client ) {
-	jfst_send_fmt( jfst, serv_client, "TRANSPOSE:%d",
-		       midi_filter_transposition_get(jfst->transposition) );
-}
-
-static void set_transpose ( JFST* jfst, int trnspos, ServClient* serv_client ) {
-    trnspos =  trnspos < -36 ? -36 : trnspos > 36 ? 36 : trnspos;
-    midi_filter_transposition_set(jfst->transposition, trnspos);
-}
-
-typedef enum {
+enum PROTO_CMD {
 	CMD_UNKNOWN,
 	CMD_EDITOR,
 	CMD_LIST_PROGRAMS,
@@ -264,8 +254,8 @@ typedef enum {
 	CMD_MIDI_LEARN,
 	CMD_SET_VOLUME,
 	CMD_GET_VOLUME,
-	CMD_GET_TRANSPOSE,
 	CMD_SET_TRANSPOSE,
+	CMD_GET_TRANSPOSE,
 	CMD_SUSPEND,
 	CMD_RESUME,
 	CMD_LOAD,
@@ -273,10 +263,10 @@ typedef enum {
 	CMD_HELP,
 	CMD_QUIT,
 	CMD_KILL
-} PROTO_CMD;
+};
 
 struct PROTO_MAP {
-	PROTO_CMD key;
+	enum PROTO_CMD key;
 	const char* name;
 };
 
@@ -308,7 +298,18 @@ static struct PROTO_MAP proto_string_map[] = {
 	{ CMD_UNKNOWN, NULL }
 };
 
-static PROTO_CMD proto_lookup ( const char* name ) {
+static void dohelp(int client_sock)
+{
+    char msg[256] = "";
+	short i;
+	for ( i = 0; proto_string_map[i].key != CMD_UNKNOWN; i++ ) {
+		strcat( msg, proto_string_map[i].name );
+		strcat( msg, " " );
+	}
+	serv_send_client_data ( client_sock, msg, strlen(msg) );
+}
+
+static enum PROTO_CMD proto_lookup ( const char* name ) {
 	short i;
 	for ( i = 0; proto_string_map[i].key != CMD_UNKNOWN; i++ ) {
 		if ( ! strcasecmp( proto_string_map[i].name, name ) )
@@ -316,18 +317,6 @@ static PROTO_CMD proto_lookup ( const char* name ) {
 	}
 	return CMD_UNKNOWN;
 }
-
-typedef struct {
-	const char* cmd;
-	const char* value;
-	const char* value2;
-	PROTO_CMD proto_cmd;
-	JFST* jfst;
-	/* return */
-	unsigned int ack;
-	bool quit;
-	bool done;
-} CMD;
 
 static char *nexttoken(char **str)
 {
@@ -392,215 +381,237 @@ static char *nexttoken(char **str)
     return tokstart != out ? tokstart : NULL;
 }
 
-void msg2cmd( char* msg, CMD* cmd ) {
-	char* p = msg;
+static bool jfst_proto_client_dispatch ( char *msg, int client_sock,
+					 JFST* jfst) {
+	bool failed = false;
+
+//	printf ( "GOT MSG: %s\n", msg );
+
+	char *p = msg;
 	char *token;
 
-	cmd->cmd = "";
-	cmd->value = "";
-	cmd->value2 = "";
+	char *cmdtok = "";
+	char *param = "";
+	char *param2 = "";
 
 	if (token = nexttoken(&p)) {
-	    cmd->cmd = token;
+	    cmdtok = token;
 	    if (token = nexttoken(&p)) {
-		cmd->value = token;
+		param = token;
 		if (token = nexttoken(&p))
-		    cmd->value2 = token;
+		    param2 = token;
 	    }
 	}
 
-	if (*cmd->cmd != ':' && *cmd->cmd != '#')
-	    cmd->proto_cmd = proto_lookup( cmd->cmd );
-	cmd->ack = false;
-	cmd->quit = false;
-	cmd->done = false;
-	cmd->jfst = NULL;
-}
+	char outbuf[64];
+	unsigned int num_arg;
 
-static void help( ServClient* serv_client ) {
-	char msg[256] = "";
-	short i;
-	for ( i = 0; proto_string_map[i].key != CMD_UNKNOWN; i++ ) {
-		strcat( msg, proto_string_map[i].name );
-		strcat( msg, " " );
-	}
-	serv_client_send_data ( serv_client, msg );
-}
+	if (cmdtok) {
+	    if (*cmdtok == ':') {
+		set_param_b64(jfst, cmdtok+1);
+		return true;
+	    }
 
-void jfst_proto_dispatch( ServClient* serv_client, CMD* cmd ) {
-	JFST* jfst = cmd->jfst;
-	const char* value = cmd->value;
-	cmd->done = cmd->ack = true;
+	    if (*cmdtok == '#') {
+		list_params_b64(jfst, client_sock, cmdtok[1] == 0);
+		return true;
+	    }
 
-	if (*cmd->cmd == '#') {
-	    list_params_b64(jfst, serv_client, cmd->cmd[1] == 0);
-	    cmd->ack = 2;
-	    return;
-	}
-	
-	if (*cmd->cmd == ':') {
-	    set_param_b64(jfst, cmd->cmd+1);
-	    cmd->ack = 2;
-	    return;
-	}
-
-	switch ( cmd->proto_cmd ) {
-	case CMD_EDITOR:
-		if ( !strcasecmp(value, "open") ) {
-			fst_run_editor ( jfst->fst, false );
-		} else if ( !strcasecmp(value,"close") ) {
-			fst_call ( jfst->fst, EDITOR_CLOSE );
-		} else {
-			puts ( "Need value: open|close" );
-			cmd->ack = false;
+	    switch ( proto_lookup ( cmdtok ) ) {
+	    case CMD_QUIT:
+		return false;
+	    case CMD_LIST_PARAMS:
+		list_params(jfst, client_sock, param[0]);
+		break;
+	    case CMD_LIST_MIDI_MAP:
+		list_midi_map(jfst, client_sock);
+		break;
+	    case CMD_SAVE:
+		if (!jfst_save_state(jfst, param))
+		    failed = true;
+		break;
+	    case CMD_LOAD:
+		if (!jfst_load_state(jfst, param))
+		    failed = true;
+		break;
+	    case CMD_EDITOR:
+		if (param && !strcasecmp(param, "open"))
+		    fst_run_editor ( jfst->fst, false );
+		else if (param && !strcasecmp(param, "close"))
+		    fst_call ( jfst->fst, EDITOR_CLOSE );
+		else {
+		    puts ( "Need param: open|close" );
+		    failed = true;
 		}
 		break;
-	case CMD_LIST_PROGRAMS:
-		list_programs ( jfst, serv_client );
-		break;
-	case CMD_LIST_PARAMS:
-	        list_params ( jfst, serv_client, *value );
-		if (*value)
-		    cmd->ack = 2;
-		break;
-	case CMD_LIST_MIDI_MAP:
-		list_midi_map( jfst, serv_client );
-		break;
-	case CMD_GET_PROGRAM:
-		get_program ( jfst, serv_client );
-		break;
-	case CMD_SET_PROGRAM:
-		fst_set_program ( jfst->fst, strtol(value, NULL, 10) );
-		break;
-	case CMD_GET_PARAM:
-	        get_param ( jfst, strtol(value, NULL, 10), serv_client,
-			    *cmd->value2 );
-		if (*cmd->value2)
-		    cmd->ack = 2;
-		break;
-	case CMD_SET_PARAM:
-	        set_param(jfst, strtol(value, NULL, 10), cmd->value2);
-		if (cmd->value2[0] == '0' && cmd->value2[1] == 'x')
-		    cmd->ack = 2;
-		break;
-	case CMD_GET_MIDI_MAP:
-	        get_midi_map ( jfst, strtol(value, NULL, 10), serv_client );
-		break;
-	case CMD_SET_MIDI_MAP:
-	        set_midi_map(jfst, strtol(value, NULL, 10),
-			  cmd->value2[0] ?
-			     strtol(cmd->value2, NULL, 10) : -1);
-		break;
-	case CMD_GET_CHANNEL:
-		get_channel ( jfst, serv_client );
-		break;
-	case CMD_SET_CHANNEL:
-		midi_filter_one_channel_set( &jfst->channel, strtol(value, NULL, 10) );
-		break;
-	case CMD_GET_TRANSPOSE:
-	        get_transpose( jfst, serv_client );
-		break;
-	case CMD_SET_TRANSPOSE:
-	        set_transpose( jfst, strtol(value, NULL, 10), serv_client );
-		break;
-	case CMD_MIDI_LEARN:
-		if ( !strcasecmp(value, "start") ) {
-			jfst_midi_learn(jfst, true );
-		} else if ( !strcasecmp(value,"stop") ) {
-			jfst_midi_learn(jfst, false);
+	    case CMD_MIDI_LEARN:
+		if ( param && !strcasecmp(param, "start") ) {
+		    jfst_midi_learn(jfst, true );
+		} else if ( param && !strcasecmp(param,"stop") ) {
+		    jfst_midi_learn(jfst, false );
 		} else {
-			puts ( "Need value: start|stop" );
-			cmd->ack = false;
+			puts ( "Need param: start|stop" );
+			failed = true;
 		}
 		break;
-	case CMD_SET_VOLUME:
-		jfst_set_volume(jfst, strtol(value, NULL, 10));
+	    case CMD_GET_PARAM:
+		num_arg = strtol(param, NULL, 10);
+		get_param(jfst, num_arg, client_sock, param2[0]);
 		break;
-	case CMD_GET_VOLUME:
-		get_volume(jfst, serv_client);
+	    case CMD_SET_PARAM: {
+		num_arg = strtol(param, NULL, 10);
+		set_param(jfst, num_arg, param2[0] ? param2 : "0",
+			  client_sock);
 		break;
-	case CMD_SUSPEND:
+	    }
+	    case CMD_GET_MIDI_MAP:
+		num_arg = strtol(param, NULL, 10);
+		get_midi_map(jfst, num_arg, client_sock);
+		break;
+	    case CMD_SET_MIDI_MAP: {
+		num_arg = strtol(param, NULL, 10);
+		set_midi_map(jfst, num_arg,
+			     strtol(param2 ? param2 : "-1", NULL, 10),
+			     client_sock);
+		break;
+	    }
+	    case CMD_GET_CHANNEL:
+		snprintf(outbuf, sizeof(outbuf)-1, "CHANNEL:%d\n",
+			 midi_filter_one_channel_get(&jfst->channel));
+		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
+		break;
+	    case CMD_SET_CHANNEL:
+		if (param) {
+		    midi_filter_one_channel_set(&jfst->channel,
+						strtol(param, NULL, 10));
+		}
+		break;
+	    case CMD_GET_VOLUME:
+		snprintf(outbuf, sizeof(outbuf)-1, "VOLUME:%d\n",
+			 jfst_get_volume(jfst));
+		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
+		break;
+	    case CMD_SET_VOLUME:
+		if (param)
+		    jfst_set_volume(jfst, strtol(param, NULL, 10));
+		break;
+	    case CMD_GET_TRANSPOSE:
+		snprintf(outbuf, sizeof(outbuf)-1, "TRANSPOSE:%d\n",
+			 midi_filter_transposition_get(jfst->transposition));
+		serv_send_client_data ( client_sock, outbuf, strlen(outbuf));
+		break;
+	    case CMD_SET_TRANSPOSE:
+		if (param) {
+		    int trnspos = strtol(param, NULL, 10);
+		    trnspos =
+			trnspos < -36 ? -36 : trnspos > 36 ? 36 : trnspos;
+		    midi_filter_transposition_set(jfst->transposition,
+						  trnspos);
+		}
+		break;
+	    case CMD_LIST_PROGRAMS:
+		list_programs ( jfst, client_sock );
+		break;
+	    case CMD_GET_PROGRAM:
+		get_program ( jfst, client_sock );
+		break;
+	    case CMD_SET_PROGRAM: {
+		int pgm = param ? strtol(param, NULL, 10) : 0;
+		fst_set_program ( jfst->fst, pgm >= 0 ? pgm : 0 ) ;
+	    }
+		break;
+	    case CMD_SUSPEND:
 		jfst_bypass ( jfst, true );
 		break;
-	case CMD_RESUME:
+	    case CMD_RESUME:
 		jfst_bypass ( jfst, false );
 		break;
-	case CMD_LOAD:
-		cmd->ack = jfst_load_state ( jfst, value );
+	    case CMD_KILL:
+		fsthost_quit ();
 		break;
-	case CMD_SAVE:
-		cmd->ack = jfst_save_state ( jfst, value );
+	    case CMD_HELP:
+		dohelp(client_sock);
 		break;
-	default:
-		cmd->ack = cmd->done = false;
+	    case CMD_UNKNOWN:
+	    default:
+		printf ( "Unknown command: %s\n", cmdtok );
+		failed = true;
+	    }
 	}
+
+	if (failed)
+	    serv_send_client_data ( client_sock, NAK, strlen(NAK) );
+
+	return true;
 }
 
-/******************** SERV ***********************************/
-
-void fsthost_proto_dispatch ( ServClient* serv_client, CMD* cmd ) {
-	cmd->ack = cmd->done = true;
-
-	switch ( cmd->proto_cmd ) {
-	case CMD_QUIT:
-		cmd->quit = true;
+static bool handle_client_connection (GIOChannel *source, GIOCondition condition, gpointer data ) {
+    bool do_quit;
+    struct linefile *file = (struct linefile *)data;
+    JFST* jfst = jfst_node_get_first()->jfst;
+    
+    while (1) {
+	char *msg = serv_client_nextline(file);
+	if (msg) {
+	    if (do_quit = !jfst_proto_client_dispatch(msg, file->fd, jfst)) {
+		g_io_channel_shutdown(file->channel, false, NULL);
 		break;
-	case CMD_HELP:
-		help( serv_client );
-		break;
-	case CMD_UNKNOWN:
-		log_error ( "GOT INVALID CMD: %s", cmd->proto_cmd );
-		cmd->ack = false;
-		break;
-	case CMD_KILL:
-		// TODO: close only one plugin
-		fsthost_quit();
-		break;
-
-	default:
-		cmd->ack = cmd->done = false;
-	}
+	    }
+	} else if (do_quit = file->state == linefile_q_exit) {
+	    g_io_channel_shutdown(file->channel, false, NULL);
+	    break;
+	} else if (file->state == linefile_q_init) break;
+    }
+    if (do_quit)
+	free(file);
+    return !do_quit;
 }
 
-static bool handle_client_callback ( ServClient* serv_client, char* msg ) {
-	CMD cmd;
-	msg2cmd( msg, &cmd );
+static bool handle_server_connection (GIOChannel *source, GIOCondition condition, gpointer data ) {
+	int serv_fd = g_io_channel_unix_get_fd ( source );
 
-	fsthost_proto_dispatch( serv_client, &cmd );
-	if ( cmd.done ) goto quit;
+	struct linefile *file = serv_get_client ( serv_fd );
+	if (file != NULL) {
+	    /* Watch client socket */
+	    GIOChannel* channel = g_io_channel_unix_new ( file->fd );
+	    file->channel = channel;
+	    g_io_add_watch_full(
+		channel,
+		G_PRIORITY_DEFAULT_IDLE,
+		G_IO_IN,
+		(GIOFunc) handle_client_connection,
+		file, NULL
+		);
+	}
 
-	JFST_NODE* jn = jfst_node_get_first();
-	cmd.jfst = jn->jfst;
-	jfst_proto_dispatch( serv_client, &cmd );
-
-quit:
-	if ( cmd.done ) log_debug ( "GOT VALID MSG: %s", msg );
-
-	// Send ACK / NAK
-	if (cmd.ack != 2)
-	    serv_client_send_data ( serv_client, (cmd.ack) ? ACK : NAK );
-
-	return ( ! cmd.quit );
+	return true;
 }
 
 /* Public functions */
 bool fsthost_proto_init ( const char * ctrl_port_name ) {
 	log_info ( "Starting PROTO control server" );
-	serv = serv_init ( ctrl_port_name, handle_client_callback );
-	if ( ! serv ) {
+	serv_fd = serv_get_sock ( ctrl_port_name );
+	if ( ! serv_fd ) {
 		log_error ( "Cannot create PROTO socket :(" );
 		return false;
 	}
+
+	/* Watch server socket */
+	GIOChannel* channel = g_io_channel_unix_new(serv_fd);
+	g_io_add_watch_full (
+		channel,
+		G_PRIORITY_DEFAULT_IDLE,
+		G_IO_IN,
+		(GIOFunc) handle_server_connection,
+		NULL, NULL
+	);
+	g_io_channel_unref(channel);
+
 	return true;
 }
 
-void proto_poll() {
-	if ( ! serv ) return;
-	serv_poll(serv);
-}
-
-void proto_close() {
-	if ( ! serv ) return;
+bool proto_close () {
+	if ( serv_fd ) serv_close_socket ( serv_fd );
 	log_info( "Stopping PROTO control server" );
-	serv_close (serv);
+	return true;
 }

@@ -1,260 +1,146 @@
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
+#include <stdbool.h>
+#include <sys/select.h>
 #include <stdio.h>
+#include <string.h>
+#include <unistd.h>    //write
 #include <sys/socket.h>
 #include <arpa/inet.h> //inet_addr
-#include <poll.h>
-#include <sys/stat.h>
 #include <sys/un.h>
+#include <stdlib.h>
+#include "linefile.h"
 
-#include "log/log.h"
-#include "serv.h"
-
-#define INFO log_info
-#define DEBUG log_debug
-#define ERROR log_error
-
+static struct sockaddr_un server_un;
 static bool cleanup_sock;
 
-static void serv_client_close ( ServClient* client ) {
-	if ( client->fd != -1 ) {
-		close ( client->fd );
-		client->fd = -1;
-	}
-	client->closed = true;
-}
-
-static char *serv_client_nextline(ServClient *client) {
-    fd_set read_set;
-    struct timeval timeout = {0, 0};
-    char *start;
-    int actual;
-    switch (client->state) {
-    case linefile_q_init:
-    case linefile_q_readagain:
-        FD_ZERO(&read_set);
-        FD_SET(client->fd, &read_set);
-        if (select(client->fd+1, &read_set, NULL, NULL, &timeout) < 1) {
-            client->state = linefile_q_init;
-            return NULL;
-        }
-        actual = read(client->fd, (char *)client->buf+client->nextix,
-		      LINEFILE_BUFSIZE - client->nextix);
-        if (actual <= 0) {
-	    if (actual == 0)
-		INFO("Client disconnected");
-	    else
-		ERROR("recv failed FD:%d", client->fd);
-            client->state = linefile_q_exit;
-            return NULL;
-        }
-        client->nextix += actual;
-        client->end = (char *)client->buf - 1;
-        client->newline_seen = false;
-        client->state = linefile_q_scanagain;
-    case linefile_q_scanagain:
-        start = client->end + 1;
-        if (client->end = strchr(start, '\n')) {
-            client->newline_seen = true;
-            if (client->skipping) {
-                client->skipping = false;
-                return NULL;
-            }
-            *client->end = 0;
-            return start;
-        }
-        client->end = (char *)client->buf - 1;
-        if (client->newline_seen) {
-            client->nextix -= start - (char *)client->buf;
-            memmove(client->buf, start, client->nextix);
-        } else if (client->nextix == LINEFILE_BUFSIZE) {
-            client->nextix = 0;
-            client->skipping = true;
-        }
-        client->state = linefile_q_readagain;
-        return NULL;
-    }
-}
-
-static void serv_client_get_data ( ServClient* client ) {
-    bool do_quit;
-    while(1) {
-	char *msg = serv_client_nextline(client);
-	if (msg) {
-	    if (do_quit = !client->callback(client, msg)) break;
-	} else if (do_quit = client->state == linefile_q_exit) break;
-	else if (client->state == linefile_q_init) break;
-    }
-    if (do_quit)
-	serv_client_close(client);
-}
-
-static int serv_get_client_fd ( Serv* serv ) {
-	//Accept and incoming connection
-	INFO("Waiting for incoming connections...");
-     
-	//accept connection from an incoming client
-	int client_sock = accept(serv->fd, NULL, NULL);
-	if (client_sock < 0) {
-		ERROR("accept failed");
-		return 0;
-	}
-	INFO("Connection accepted");
-
-	return client_sock;
-}
-
-static void serv_client_open ( Serv* serv ) {
-	/* Find space for new client */
-	int i;
-	for ( i = 0; i < SERV_MAX_CLIENTS; i++ ) {
-		if ( serv->clients[i].fd == -1 ) {
-			int fd = serv_get_client_fd( serv );
-			if ( ! fd ) return;
-
-			ServClient* client = &serv->clients[i];
-			client->fd = fd;
-			client->closed = false;
-			client->data = NULL;
-			client->skipping = false;
-			client->newline_seen = false;
-			client->state = linefile_q_init;
-			client->nextix = 0;
-			return;
-		}
-	}
-}
-
-struct sockaddr_un server_un;
-
-Serv* serv_init ( const char *name, serv_client_callback cb ) {
-    int fd ;
-    
-    if (*name && strspn(name, "0123456789") != strlen(name)) {
-	fd = socket(AF_UNIX , SOCK_STREAM , 0);
-	if (fd == -1) {
-	    ERROR("Could not create socket");
-	    return NULL;
-	}
-	INFO("Socket created");
-	socklen_t addrlen = strlen(name);
+int serv_get_sock ( const char *sockname ) {
+    int socket_desc;
+    if ( *sockname && strspn(sockname, "0123456789") != strlen(sockname) ) {
+	socket_desc = socket(AF_UNIX , SOCK_STREAM , 0);
+	if (socket_desc < 0) goto err0;
+	socklen_t addrlen = strlen(sockname);
+	puts("Socket created");
 	if (addrlen > sizeof(server_un.sun_path))
 	    addrlen = sizeof(server_un.sun_path) - 1;
-	memcpy(server_un.sun_path, name, addrlen);
+	memcpy(server_un.sun_path, sockname, addrlen);
 	server_un.sun_family = AF_UNIX;
 	unlink(server_un.sun_path);
-	if (bind(fd, (struct sockaddr *)&server_un,
-		 sizeof(server_un)) != 0) {
-	    ERROR("bind failed. Error");
-	    close(fd);
-	    return NULL;
-	}
+	if (bind(socket_desc, (struct sockaddr *)&server_un,
+		 sizeof(server_un)) != 0)
+	    goto err1;
 	cleanup_sock = true;
-	INFO("Serv start on port: %s", server_un.sun_path);
+	printf ("bind done: port %s\n", server_un.sun_path);
     } else {
-	fd = socket(AF_INET , SOCK_STREAM , 0);
-	if (fd == -1) {
-	    ERROR("Could not create socket");
-	    return NULL;
-	}
-	INFO("Socket created");
+	socket_desc = socket(AF_INET , SOCK_STREAM , 0);
+	if (socket_desc < 0) goto err0;
+	puts("Socket created");
 	struct sockaddr_in server;
 	socklen_t addrlen = sizeof(server);
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl( INADDR_ANY );
-	server.sin_port = htons( atoi(name) );
+	uint16_t port = atoi(sockname);
+	server.sin_port = htons( port );
 	int ofc = 1;
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &ofc, sizeof ofc);
- 
-	if ( bind (fd,(struct sockaddr *) &server , addrlen) < 0 ) {
-	    ERROR("bind failed. Error");
-	    close(fd);
-	    return NULL;
-	}
-	getsockname ( fd, (struct sockaddr *) &server , &addrlen );
-	INFO("Serv start on port: %d", ntohs(server.sin_port));
+	setsockopt(socket_desc, SOL_SOCKET, SO_REUSEADDR, &ofc, sizeof ofc);
+	if (bind (socket_desc,(struct sockaddr *) &server , addrlen) < 0)
+	    goto err1;
+	getsockname ( socket_desc, (struct sockaddr *) &server , &addrlen );
+	printf ("bind done, port: %d\n", ntohs( server.sin_port ) );
     }
 
-    listen(fd, SERV_MAX_CLIENTS);
-
-    Serv* serv = malloc( sizeof(Serv) );
-    serv->fd = fd;
-
-    // Init clients
-    int i;
-    for ( i = 0; i < SERV_MAX_CLIENTS; i++ ) {
-	ServClient* client = &serv->clients[i];
-	client->fd = -1;
-	client->number = i;
-	client->callback = cb;
-	client->closed = true;
-	client->data = NULL;
-    }
-
-    return serv;
+    listen(socket_desc , 3);
+    return socket_desc;
+    
+err0:
+    printf("Could not create socket");
+    return 0;
+err1:
+    close(socket_desc);
+    printf("Bind failed. Error");
+    return 0;
 }
 
-bool serv_client_send_data ( ServClient* client, const char* msg ) {
-	size_t msg_len = strlen(msg);
+
+static struct linefile *make_linefile(int fd)
+{
+    struct linefile *file = malloc(sizeof(*file));
+    memset(file, 0, sizeof(*file));
+    file->fd = fd;
+    return file;
+}
+
+struct linefile *serv_get_client ( int socket_desc ) {
+	//Accept and incoming connection
+	puts("Waiting for incoming connections...");
+     
+	//accept connection from an incoming client
+	int client_sock = accept(socket_desc, NULL, NULL);
+	if (client_sock < 0) {
+		perror("accept failed");
+		return NULL;
+	}
+	puts("Connection accepted");
+
+	return make_linefile(client_sock);
+}
+
+bool serv_send_client_data ( int client_sock, char* msg, int msg_len ) {
 	char data[msg_len + 2];
-	sprintf ( data, "%s\n", msg );
-	size_t len = sizeof(data) - 1;
-	ssize_t write_size = write ( client->fd, data, len );
+	snprintf ( data, sizeof data, "%s\n", msg );
+	int len = sizeof(data) - 1;
+	int write_size = write ( client_sock , data, len);
 	return ( write_size == len ) ? true : false;
 }
 
-void serv_poll (Serv* serv) {
-	struct pollfd fds[SERV_POLL_SIZE];
-
-	int i;
-	for ( i = 0; i < SERV_POLL_SIZE; i++ ) {
-		if ( i == 0 ) {
-			fds[i].fd = serv->fd;
-		} else {
-			fds[i].fd = serv->clients[i-1].fd;
-		}
-
-		fds[i].events = POLLIN;
-		fds[i].revents = 0;
+char *serv_client_nextline(struct linefile *file) {
+    fd_set read_set;
+    struct timeval timeout = {0, 0};
+    char *start;
+    int actual;
+    switch (file->state) {
+    case linefile_q_init:
+    case linefile_q_readagain:
+	FD_ZERO(&read_set);
+	FD_SET(file->fd, &read_set);
+	if (select(file->fd+1, &read_set, NULL, NULL, &timeout) < 1) {
+	    file->state = linefile_q_init;
+	    return NULL;
 	}
-
-	//wait for an activity on one of the sockets, don't block
-	int activity = poll(fds, SERV_POLL_SIZE, 0);
-	if (activity < 1) return;
-
-	for ( i = 0; i < SERV_POLL_SIZE; i++ ) {
-		if ( fds[i].revents != POLLIN) {
-		    if ( fds[i].revents != 0 ){
-			if (fds[i].revents & POLLHUP) {
-			    for ( int j = 1; j < SERV_POLL_SIZE; j++ )
-				if (serv->clients[j-1].fd == fds[i].fd)
-				    serv_client_close(&serv->clients[j-1]);
-			}
-			ERROR("FDS: %d, Err revents = %d", i, fds[i].revents);
-		    }
-			continue;
-		}
-
-		// Server socket i.e. new client
-		if ( i == 0 ) {
-			serv_client_open(serv);
-		// Client socket
-		} else {
-			serv_client_get_data( &( serv->clients[i-1] ) );
-		}
+	actual = read(file->fd, (char *)file->buf+file->nextix,
+			  LINEFILE_BUFSIZE - file->nextix);
+	if (actual <= 0) {
+	    file->state = linefile_q_exit;
+	    return NULL;
 	}
+	file->nextix += actual;
+	file->end = (char *)file->buf - 1;
+	file->newline_seen = false;
+	file->state = linefile_q_scanagain;
+    case linefile_q_scanagain:
+	start = file->end + 1;
+	if (file->end = strchr(start, '\n')) {
+	    file->newline_seen = true;
+	    if (file->skipping) {
+		file->skipping = false;
+		return NULL;
+	    }
+	    *file->end = 0;
+	    return start;
+	}
+	file->end = (char *)file->buf - 1;
+	if (file->newline_seen) {
+	    file->nextix -= start - (char *)file->buf;
+	    memmove(file->buf, start, file->nextix);
+	} else if (file->nextix == LINEFILE_BUFSIZE) {
+	    file->nextix = 0;
+	    file->skipping = true;
+	}
+	file->state = linefile_q_readagain;
+	return NULL;
+    }
 }
 
-void serv_close (Serv* serv) {
-	// Close all clients
-	int i;
-	for ( i = 0; i < SERV_MAX_CLIENTS; i ++ )
-		serv_client_close( &serv->clients[i] );
-
-	// Close server
-	close ( serv->fd );
+void serv_close_socket ( int socket_desc ) {
+	close ( socket_desc );
 	if (cleanup_sock)
 	    unlink(server_un.sun_path);
-	free(serv);
 }
