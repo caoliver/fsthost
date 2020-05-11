@@ -54,7 +54,6 @@ extern void jfst_lash_add (JFST* jfst);
 
 /* fsthost_proto */
 extern bool fsthost_proto_init( const char* port_name );
-extern void proto_poll();
 extern void proto_close();
 
 volatile bool quit = false;
@@ -120,8 +119,6 @@ bool fsthost_idle () {
 		return false;
 	}
 
-	proto_poll();
-
 	if ( open_editor ) {
 		open_editor = false;
 		JFST_NODE* jn;
@@ -135,8 +132,6 @@ bool fsthost_idle () {
 static void edit_close_handler ( void* arg ) {
 	quit = true;
 }
-
-int idle_ms = LOOP_INT;
 
 static void cmdline2arg(int *argc, char ***pargv, LPSTR cmdline) {
 	LPWSTR* szArgList = CommandLineToArgvW(GetCommandLineW(), argc);
@@ -210,7 +205,7 @@ main_loop() {
 		if ( ! fsthost_idle() )
 			break;
 
-		usleep ( idle_ms * 1000 );
+		usleep ( LOOP_INT * 1000 );
 	}
 }
 
@@ -305,7 +300,6 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			case 'N': def->sysex_want_notify = true; break;
 			case 'm': def->want_state_cc = strtol(optarg, NULL, 10); break;
 			case 'T': separate_threads = true;
-		case 'I': idle_ms = strtoul(optarg, NULL, 10);
 			case 'u': plugins[pc].uuid = optarg; break;
 			case 'U': def->sysex_uuid = strtol(optarg, NULL, 10); break;
 			case 'v': log_level = LOG_DEBUG; break;
@@ -313,8 +307,6 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 			default: usage (argv[0]); return 1;
 		}
 	}
-	if (idle_ms < 1)
-	    idle_ms = 1;
 
 #ifdef NO_GTK
 	gtk_gui = false;
@@ -403,7 +395,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
 #ifdef NO_GTK
 	main_loop();
 #else
-	g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, idle_ms, (GSourceFunc) fsthost_idle, NULL, NULL);
+	g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, LOOP_INT, (GSourceFunc) fsthost_idle, NULL, NULL);
 	if (gtk_gui) {
 		log_info( "Start GUI" );
 		gjfst_init(&argc, &argv);
