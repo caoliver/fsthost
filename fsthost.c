@@ -169,7 +169,6 @@ static void usage(char* appname) {
 	fprintf(stderr, fmt, "-L", "List plugins from XML info DB.");
 	fprintf(stderr, fmt, "-d xml_db_path", "Custom path to XML DB");
 	fprintf(stderr, fmt, "-b", "Start in bypass mode");
-	fprintf(stderr, fmt, "-I", "Idle loop delay (milliseconds)");
 #ifndef NO_GTK
 	fprintf(stderr, fmt, "-n", "Disable GTK GUI");
 #endif
@@ -274,7 +273,7 @@ WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR cmdline, int cmdshow) {
         // Parse command line options
 	cmdline2arg(&argc, &argv, cmdline);
 	short c;
-	while ( (c = getopt (argc, argv, "Abd:eEgs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:I:vV")) != -1) {
+	while ( (c = getopt (argc, argv, "Abd:eEgs:S:c:k:i:j:lLnNMm:p:Po:Tu:U:vV")) != -1) {
 		switch (c) {
 			case 'A': def->want_port_aliases = true; break;
 			case 'b': def->bypassed = true; break;
